@@ -12,7 +12,7 @@ except:
 
 # 这是一个直接访问 Google Gemini API 的函数，不依赖安装包
 def call_gemini_api(prompt):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-robotics-er-1.5-preview:generateContent?key={API_KEY}"
     headers = {'Content-Type': 'application/json'}
     data = {
         "contents": [{
@@ -153,3 +153,4 @@ elif mode == "❌ 错题本":
             if st.button("移除", key=f"del_{i}"):
                 st.session_state.mistakes.pop(i)
                 st.rerun()
+
