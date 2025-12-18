@@ -63,14 +63,21 @@ def call_gemini(prompt):
     except:
         return None
 
-def extract_text_from_pdf(file):
-    """使用 pdfplumber 读取 PDF (增强版)"""
+def extract_text_from_pdf(file, start_page=1, end_page=None):
+    """【升级版】支持指定页码读取 PDF"""
     text = ""
     try:
         with pdfplumber.open(file) as pdf:
-            # 限制读取前 50 页，防止 Tokens 爆炸
-            for page in pdf.pages[:50]: 
+            total_pages = len(pdf.pages)
+            # 处理页码越界
+            if start_page < 1: start_page = 1
+            if end_page is None or end_page > total_pages: end_page = total_pages
+            
+            # pdfplumber 索引从 0 开始，所以要 -1
+            for i in range(start_page - 1, end_page):
+                page = pdf.pages[i]
                 text += page.extract_text() + "\n"
+                
         return text
     except Exception as e:
         st.error(f"PDF 解析失败: {e}")
@@ -199,50 +206,83 @@ elif menu == "📚 资料库 (双轨录入)":
         with type_tab2:
             st.warning("⚡ 适合：已有题目和答案的文档。AI 将提取题目并存入题库。")
             
-            c1, c2 = st.columns(2)
+            # 上传文件放在最前面，方便读取总页数
+            uploaded_b = st.file_uploader("上传真题/母题 PDF", type="pdf", key="pdf_b")
+            
+            # 如果上传了文件，显示页码控制器
+            total_pages = 0
+            if uploaded_b:
+                try:
+                    with pdfplumber.open(uploaded_b) as pdf:
+                        total_pages = len(pdf.pages)
+                    st.success(f"📄 检测到文件共 {total_pages} 页")
+                except:
+                    st.error("无法读取页数")
+
+            c1, c2, c3 = st.columns([1, 1, 2])
             with c1:
-                ans_pos = st.selectbox("答案位置", ["答案紧跟题目", "答案在文档末尾", "无答案(仅录入题目)"])
+                p_start = st.number_input("开始页码", min_value=1, value=1, step=1)
             with c2:
-                custom_hint = st.text_input("给 AI 的特别叮嘱", placeholder="例如：忽略页眉水印...")
+                # 默认只读取前 10 页，避免卡死
+                default_end = 10 if total_pages >= 10 else total_pages
+                p_end = st.number_input("结束页码", min_value=1, value=default_end, step=1)
             
-            uploaded_b = st.file_uploader("上传真题 PDF", type="pdf", key="pdf_b")
+            with c3:
+                ans_pos = st.selectbox("答案位置", ["答案紧跟题目", "答案在文档末尾/章节末尾"])
+
+            custom_hint = st.text_input("给 AI 的特别叮嘱", placeholder="例如：这是第一章存货的题目，忽略页眉...")
             
-            # Session State 用于暂存提取结果以供预览
+            # Session State 用于暂存提取结果
             if 'extracted_data' not in st.session_state:
                 st.session_state.extracted_data = None
 
-            if st.button("🔍 开始 AI 提取"):
+            if st.button("🔍 开始提取指定范围"):
                 if uploaded_b:
-                    with st.spinner("第一步：读取 PDF..."):
-                        raw_text = extract_text_from_pdf(uploaded_b)
-                    
-                    with st.spinner("第二步：AI 正在结构化提取 (这可能需要 30 秒)..."):
-                        prompt = f"""
-                        你是一个数据录入员。请处理以下文本，提取其中的单项选择题。
-                        文本内容：{raw_text[:8000]} ... (截取)
+                    if p_end < p_start:
+                        st.error("结束页码不能小于开始页码")
+                    else:
+                        # 1. 提取文字
+                        with st.spinner(f"正在读取第 {p_start} 到 {p_end} 页..."):
+                            # 注意：Streamlit 的 file_uploader 对象读取一次后指针会到底，需要 seek(0) 重置
+                            uploaded_b.seek(0) 
+                            raw_text = extract_text_from_pdf(uploaded_b, p_start, p_end)
                         
-                        用户提示：答案位置在【{ans_pos}】。额外注意：{custom_hint}。
-                        
-                        请严格返回纯 JSON 列表，不要 Markdown。格式：
-                        [
-                            {{
-                                "question": "题目内容...",
-                                "options": ["A.选项1", "B.选项2", "C.选项3", "D.选项4"],
-                                "answer": "A", 
-                                "explanation": "解析内容(如果有)"
-                            }}
-                        ]
-                        如果找不到答案，answer字段填"无"。
-                        """
-                        res = call_gemini(prompt)
-                        if res and 'candidates' in res:
-                            try:
-                                json_str = res['candidates'][0]['content']['parts'][0]['text']
-                                clean_json = json_str.replace("```json", "").replace("```", "").strip()
-                                st.session_state.extracted_data = json.loads(clean_json)
-                            except Exception as e:
-                                st.error(f"AI 返回格式有误: {e}")
-                                st.write(res) # 调试用
+                        if len(raw_text) < 10:
+                            st.warning("提取的文字太少，请检查页码或 PDF 是否为纯图片。")
+                        else:
+                            # 2. AI 识别
+                            with st.spinner("AI 正在结构化提取题目 (这可能需要几十秒)..."):
+                                prompt = f"""
+                                你是一个专业的数据录入员。请处理以下从PDF提取的文本，提取其中的【会计题目】。
+                                
+                                文本来源：中级会计实务 - 第 {p_start} 至 {p_end} 页。
+                                答案位置提示：{ans_pos}。
+                                额外注意：{custom_hint}。
+                                
+                                请严格返回纯 JSON 列表，不要 Markdown。格式：
+                                [
+                                    {{
+                                        "question": "完整题目描述...",
+                                        "options": ["A.选项1", "B.选项2", "C.选项3", "D.选项4"],
+                                        "answer": "A", 
+                                        "explanation": "解析内容(如果文本里有就提取，没有填'略')"
+                                    }}
+                                ]
+                                文本内容：
+                                {raw_text[:10000]} 
+                                """
+                                # 限制 10000 字符防止 token 溢出
+                                
+                                res = call_gemini(prompt)
+                                if res and 'candidates' in res:
+                                    try:
+                                        json_str = res['candidates'][0]['content']['parts'][0]['text']
+                                        clean_json = json_str.replace("```json", "").replace("```", "").strip()
+                                        st.session_state.extracted_data = json.loads(clean_json)
+                                    except Exception as e:
+                                        st.error(f"AI 返回格式有误: {e}")
+                                        st.write(res) # 调试用
+
 
             # 预览与确认保存
             if st.session_state.extracted_data:
@@ -481,3 +521,4 @@ elif menu == "📝 章节特训 (刷题)":
                             st.session_state.quiz_active = False
                             st.session_state.quiz_data = []
                             st.rerun()
+
