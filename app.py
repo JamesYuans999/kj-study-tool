@@ -206,10 +206,9 @@ elif menu == "📚 资料库 (双轨录入)":
         with type_tab2:
             st.warning("⚡ 适合：已有题目和答案的文档。AI 将提取题目并存入题库。")
             
-            # 上传文件放在最前面，方便读取总页数
             uploaded_b = st.file_uploader("上传真题/母题 PDF", type="pdf", key="pdf_b")
             
-            # 如果上传了文件，显示页码控制器
+            # 读取总页数
             total_pages = 0
             if uploaded_b:
                 try:
@@ -219,59 +218,88 @@ elif menu == "📚 资料库 (双轨录入)":
                 except:
                     st.error("无法读取页数")
 
-            c1, c2, c3 = st.columns([1, 1, 2])
-            with c1:
-                p_start = st.number_input("开始页码", min_value=1, value=1, step=1)
-            with c2:
-                # 默认只读取前 10 页，避免卡死
-                default_end = 10 if total_pages >= 10 else total_pages
-                p_end = st.number_input("结束页码", min_value=1, value=default_end, step=1)
+            # --- 核心修改：双区间选择器 ---
+            st.markdown("#### 1. 设定题目位置")
+            c1, c2 = st.columns(2)
+            with c1: q_start = st.number_input("题目开始页", 1, value=1)
+            with c2: q_end = st.number_input("题目结束页", 1, value=min(10, total_pages) if total_pages else 10)
             
-            with c3:
-                ans_pos = st.selectbox("答案位置", ["答案紧跟题目", "答案在文档末尾/章节末尾"])
-
-            custom_hint = st.text_input("给 AI 的特别叮嘱", placeholder="例如：这是第一章存货的题目，忽略页眉...")
+            # 答案位置开关
+            separate_answer = st.checkbox("答案在文件后半部分 (跨页码读取)", value=False)
             
-            # Session State 用于暂存提取结果
-            if 'extracted_data' not in st.session_state:
-                st.session_state.extracted_data = None
+            a_text = "" # 初始化
+            
+            if separate_answer:
+                st.markdown("#### 2. 设定答案位置")
+                st.caption("请去 PDF 末尾找一下这一章答案在哪几页")
+                c3, c4 = st.columns(2)
+                with c3: a_start = st.number_input("答案开始页", 1, value=total_pages if total_pages else 1)
+                with c4: a_end = st.number_input("答案结束页", 1, value=total_pages if total_pages else 1)
+            
+            custom_hint = st.text_input("给 AI 的特别叮嘱", placeholder="例如：这是第一章存货的题，请把答案匹配对...")
+            
+            # Session State
+            if 'extracted_data' not in st.session_state: st.session_state.extracted_data = None
 
-            if st.button("🔍 开始提取指定范围"):
+            if st.button("🔍 组合读取并提取"):
                 if uploaded_b:
-                    if p_end < p_start:
-                        st.error("结束页码不能小于开始页码")
+                    if q_end < q_start:
+                        st.error("题目页码范围错误")
                     else:
-                        # 1. 提取文字
-                        with st.spinner(f"正在读取第 {p_start} 到 {p_end} 页..."):
-                            # 注意：Streamlit 的 file_uploader 对象读取一次后指针会到底，需要 seek(0) 重置
-                            uploaded_b.seek(0) 
-                            raw_text = extract_text_from_pdf(uploaded_b, p_start, p_end)
+                        # 1. 提取题目部分
+                        with st.spinner(f"正在读取题目 (P{q_start}-{q_end})..."):
+                            uploaded_b.seek(0)
+                            q_raw_text = extract_text_from_pdf(uploaded_b, q_start, q_end)
                         
-                        if len(raw_text) < 10:
-                            st.warning("提取的文字太少，请检查页码或 PDF 是否为纯图片。")
+                        # 2. 提取答案部分 (如果有)
+                        a_raw_text = ""
+                        if separate_answer:
+                            if a_end < a_start:
+                                st.error("答案页码范围错误")
+                                st.stop()
+                            with st.spinner(f"正在读取答案 (P{a_start}-{a_end})..."):
+                                uploaded_b.seek(0)
+                                a_raw_text = extract_text_from_pdf(uploaded_b, a_start, a_end)
+                        
+                        # 3. 拼接文本
+                        full_context = f"""
+                        【以下是题目部分】：
+                        {q_raw_text}
+                        
+                        ----------------
+                        【以下是答案部分】：
+                        {a_raw_text}
+                        """
+                        
+                        if len(full_context) < 20:
+                            st.warning("提取内容过少，请检查页码。")
                         else:
-                            # 2. AI 识别
-                            with st.spinner("AI 正在结构化提取题目 (这可能需要几十秒)..."):
+                            # 4. 发送给 AI
+                            with st.spinner("AI 正在左右互搏 (匹配题目与答案)..."):
                                 prompt = f"""
-                                你是一个专业的数据录入员。请处理以下从PDF提取的文本，提取其中的【会计题目】。
+                                任务：从以下文本中提取会计题目和对应的答案。
                                 
-                                文本来源：中级会计实务 - 第 {p_start} 至 {p_end} 页。
-                                答案位置提示：{ans_pos}。
-                                额外注意：{custom_hint}。
+                                情况说明：题目和答案在不同的区域。
+                                1. 题目区域包含了题干和选项。
+                                2. 答案区域包含了题号和正确选项（可能还有解析）。
+                                请根据【题号】（如 1. 2. 3. 或 (1) (2)）将它们对应起来。
                                 
-                                请严格返回纯 JSON 列表，不要 Markdown。格式：
+                                额外要求：{custom_hint}
+                                
+                                返回格式：纯 JSON 列表
                                 [
                                     {{
-                                        "question": "完整题目描述...",
-                                        "options": ["A.选项1", "B.选项2", "C.选项3", "D.选项4"],
+                                        "question": "题目...",
+                                        "options": ["A.","B."],
                                         "answer": "A", 
-                                        "explanation": "解析内容(如果文本里有就提取，没有填'略')"
+                                        "explanation": "解析..."
                                     }}
                                 ]
-                                文本内容：
-                                {raw_text[:10000]} 
+                                
+                                待处理文本：
+                                {full_context[:15000]} 
                                 """
-                                # 限制 10000 字符防止 token 溢出
+                                # 稍微放宽字符限制，因为包含了答案部分
                                 
                                 res = call_gemini(prompt)
                                 if res and 'candidates' in res:
@@ -280,8 +308,21 @@ elif menu == "📚 资料库 (双轨录入)":
                                         clean_json = json_str.replace("```json", "").replace("```", "").strip()
                                         st.session_state.extracted_data = json.loads(clean_json)
                                     except Exception as e:
-                                        st.error(f"AI 返回格式有误: {e}")
-                                        st.write(res) # 调试用
+                                        st.error(f"AI 没能解析成功: {e}")
+                                        st.write(res)
+
+            # 预览与保存 (代码不变)
+            if st.session_state.extracted_data:
+                st.divider()
+                st.subheader("🧐 匹配结果预览")
+                df = pd.DataFrame(st.session_state.extracted_data)
+                st.dataframe(df, use_container_width=True)
+                
+                if st.button("💾 确认存入"):
+                    save_questions_batch(st.session_state.extracted_data, current_chap_id, user_id)
+                    st.balloons()
+                    st.success("入库成功！")
+                    st.session_state.extracted_data = None
 
 
             # 预览与确认保存
@@ -521,4 +562,5 @@ elif menu == "📝 章节特训 (刷题)":
                             st.session_state.quiz_active = False
                             st.session_state.quiz_data = []
                             st.rerun()
+
 
