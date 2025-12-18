@@ -6,6 +6,7 @@ import pandas as pd
 import pdfplumber
 from supabase import create_client
 import time
+import docx
 
 # --- 1. 配置与风格 (保留之前的奶油绿风格) ---
 st.set_page_config(page_title="中级会计冲刺班", page_icon="🥝", layout="wide")
@@ -81,6 +82,18 @@ def extract_text_from_pdf(file, start_page=1, end_page=None):
         return text
     except Exception as e:
         st.error(f"PDF 解析失败: {e}")
+        return ""
+
+def extract_text_from_docx(file):
+    """读取 Word 文档全文"""
+    try:
+        doc = docx.Document(file)
+        full_text = []
+        for para in doc.paragraphs:
+            full_text.append(para.text)
+        return "\n".join(full_text)
+    except Exception as e:
+        st.error(f"Word 解析失败: {e}")
         return ""
 
 # --- 数据库操作 Helper ---
@@ -239,80 +252,117 @@ elif menu == "📚 资料库 (双轨录入)":
         # --- 轨道 A ---
         with type_tab1:
             st.info("💡 适合：电子书、笔记。AI 将阅读内容，并在练习时为你生成新题目。")
-            uploaded_a = st.file_uploader("上传教材 PDF", type="pdf", key="pdf_a")
+            # 修改点：type 增加了 "docx"
+            uploaded_a = st.file_uploader("上传教材 (PDF/Word)", type=["pdf", "docx"], key="file_a")
             
             if st.button("📥 保存教材资料"):
                 if uploaded_a:
-                    with st.spinner("正在OCR识别文字..."):
-                        # 复用之前的 PDF 提取逻辑
-                        text = extract_text_from_pdf(uploaded_a)
+                    text = ""
+                    with st.spinner("正在识别文字..."):
+                        # 修改点：判断文件后缀
+                        if uploaded_a.name.endswith(".pdf"):
+                            text = extract_text_from_pdf(uploaded_a)
+                        elif uploaded_a.name.endswith(".docx"):
+                            text = extract_text_from_docx(uploaded_a)
+                            
                         if len(text) > 50:
                             save_material_track_a(current_chap_id, text, uploaded_a.name, user_id)
-                            st.markdown(f"<div class='success-box'>✅ 资料已入库！共 {len(text)} 字。请去‘章节特训’开始出题。</div>", unsafe_allow_html=True)
+                            st.markdown(f"<div class='success-box'>✅ 资料已入库！共 {len(text)} 字。</div>", unsafe_allow_html=True)
                         else:
-                            st.error("文字太少或无法识别，请检查PDF。")
+                            st.error("文字太少或无法识别。")
 
         # --- 轨道 B (保持你之前要求的跨页码提取功能) ---
         with type_tab2:
             st.warning("⚡ 适合：已有题目和答案的文档。AI 将提取题目并存入题库。")
             
-            uploaded_b = st.file_uploader("上传真题/母题 PDF", type="pdf", key="pdf_b")
+            uploaded_b = st.file_uploader("上传真题/母题 (PDF/Word)", type=["pdf", "docx"], key="file_b")
+            
+            # 只有 PDF 才能显示页码控制器，Word 显示全文提示
+            is_pdf = uploaded_b is not None and uploaded_b.name.endswith(".pdf")
+            is_word = uploaded_b is not None and uploaded_b.name.endswith(".docx")
             
             total_pages = 0
-            if uploaded_b:
+            if is_pdf:
                 try:
-                    with pdfplumber.open(uploaded_b) as pdf:
-                        total_pages = len(pdf.pages)
-                    st.success(f"📄 检测到文件共 {total_pages} 页")
-                except:
-                    pass
+                    with pdfplumber.open(uploaded_b) as pdf: total_pages = len(pdf.pages)
+                    st.success(f"📄 PDF 检测到 {total_pages} 页")
+                except: pass
+            elif is_word:
+                st.info("📄 Word 文档已就绪 (Word 模式下将读取全文)")
 
-            st.markdown("#### 1. 设定题目位置")
-            c1, c2 = st.columns(2)
-            with c1: q_start = st.number_input("题目开始页", 1, value=1)
-            with c2: q_end = st.number_input("题目结束页", 1, value=min(10, total_pages) if total_pages else 10)
+            # 控制器逻辑
+            if is_pdf:
+                # ... (保留你之前的 PDF 双区间选择器代码) ...
+                # 这里为了节省篇幅，复用你上一次生成的“双区间读取”UI代码
+                st.markdown("#### 1. 设定题目位置")
+                c1, c2 = st.columns(2)
+                with c1: q_start = st.number_input("题目开始页", 1, value=1)
+                with c2: q_end = st.number_input("题目结束页", 1, value=min(10, total_pages) if total_pages else 10)
+                
+                separate_answer = st.checkbox("答案在文件后半部分", value=False)
+                if separate_answer:
+                    c3, c4 = st.columns(2)
+                    with c3: a_start = st.number_input("答案开始页", 1, value=total_pages)
+                    with c4: a_end = st.number_input("答案结束页", 1, value=total_pages)
             
-            separate_answer = st.checkbox("答案在文件后半部分 (跨页码读取)", value=False)
-            
-            a_start, a_end = 1, 1
-            if separate_answer:
-                st.markdown("#### 2. 设定答案位置")
-                c3, c4 = st.columns(2)
-                with c3: a_start = st.number_input("答案开始页", 1, value=total_pages if total_pages else 1)
-                with c4: a_end = st.number_input("答案结束页", 1, value=total_pages if total_pages else 1)
-            
-            custom_hint = st.text_input("给 AI 的特别叮嘱", placeholder="例如：忽略页眉水印...")
-            
-            if 'extracted_data' not in st.session_state: st.session_state.extracted_data = None
+            # 通用提示框
+            c_hint, c_ans_pos = st.columns([2, 1])
+            with c_hint: custom_hint = st.text_input("给 AI 的特别叮嘱", placeholder="例如：忽略水印...")
+            with c_ans_pos: ans_pos = st.selectbox("答案位置描述", ["答案紧跟题目", "答案在文档末尾"])
 
-            if st.button("🔍 组合读取并提取"):
+            if st.button("🔍 开始提取"):
                 if uploaded_b:
-                    # ... (此处复用之前的提取逻辑，为了代码简洁未重复粘贴，请确保这里使用的是上一轮对话中提供的 extract_text_from_pdf 逻辑) ...
-                    # 提示：如果你上一轮已经整合好了，这里保持原样即可。
-                    # 关键是要确保这里调用的是带页码参数的 extract_text_from_pdf(file, start, end)
-                    pass 
-                    
-                    # 逻辑占位符：
-                    with st.spinner("AI 正在提取..."):
-                        uploaded_b.seek(0)
-                        q_text = extract_text_from_pdf(uploaded_b, q_start, q_end)
-                        a_text = ""
-                        if separate_answer:
+                    raw_text = ""
+                    # 分流处理
+                    if is_pdf:
+                        with st.spinner("正在读取 PDF 指定范围..."):
                             uploaded_b.seek(0)
-                            a_text = extract_text_from_pdf(uploaded_b, a_start, a_end)
-                        
-                        full_context = f"题目：\n{q_text}\n答案：\n{a_text}"
-                        
-                        # 调用 AI ...
-                        # (请确保这里的 AI 调用逻辑与上一轮一致)
-                        # 为了演示方便，假设 AI 返回了 result
-                        # st.session_state.extracted_data = result
-                        
-                        # ⚠️ 实际操作时，请保留你上一轮代码中关于 Gemini 提取的完整逻辑
-                        # 只是把它包裹在这个 if current_chap_id 的缩进里
+                            # 题目部分
+                            raw_text = extract_text_from_pdf(uploaded_b, q_start, q_end)
+                            # 答案部分 (如果有)
+                            if separate_answer:
+                                uploaded_b.seek(0) # 指针归位
+                                a_text = extract_text_from_pdf(uploaded_b, a_start, a_end)
+                                raw_text += "\n\n【答案区域】\n" + a_text
+                    
+                    elif is_word:
+                        with st.spinner("正在读取 Word 全文..."):
+                            raw_text = extract_text_from_docx(uploaded_b)
 
-    else:
-        st.info("👆 请先在上方选择或新建一个章节")
+                    # 发送给 AI (通用逻辑)
+                    if len(raw_text) < 10:
+                        st.warning("提取内容过少")
+                    else:
+                        with st.spinner("AI 正在结构化提取..."):
+                            prompt = f"""
+                            你是一个数据录入员。请提取以下文本中的会计题目。
+                            
+                            答案位置提示：{ans_pos}。
+                            额外要求：{custom_hint}。
+                            
+                            请严格返回纯 JSON 列表，不要 Markdown。格式：
+                            [
+                                {{
+                                    "question": "题目...",
+                                    "options": ["A.","B."],
+                                    "answer": "A", 
+                                    "explanation": "解析..."
+                                }}
+                            ]
+                            
+                            文本内容：
+                            {raw_text[:15000]} 
+                            """
+                            # ... (后续 AI 调用和 session_state 存储代码保持不变) ...
+                            # 复制之前的 res = call_gemini(prompt) ... 那部分代码即可
+                            res = call_gemini(prompt)
+                            if res and 'candidates' in res:
+                                try:
+                                    json_str = res['candidates'][0]['content']['parts'][0]['text']
+                                    clean_json = json_str.replace("```json", "").replace("```", "").strip()
+                                    st.session_state.extracted_data = json.loads(clean_json)
+                                except Exception as e:
+                                    st.error(f"AI 解析错误: {e}")
 
 # === 页面：章节特训 (验证数据是否打通) ===
 # ... (前面的代码保持不变) ...
@@ -531,6 +581,7 @@ elif menu == "📝 章节特训 (刷题)":
                             st.session_state.quiz_active = False
                             st.session_state.quiz_data = []
                             st.rerun()
+
 
 
 
