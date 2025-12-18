@@ -4,3 +4,4 @@ supabase
 pdfplumber
 plotly
 pandas
+python-docx
