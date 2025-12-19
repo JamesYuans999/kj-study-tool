@@ -812,6 +812,8 @@ elif menu == "❌ 错题本":
             
             # 卡片展示
             with st.expander(f"🔴 {q['content'][:30]}... (点击展开)"):
+                st.markdown(f"### 📄 题目：\n{q['content']}")
+                st.divider() # 加条分割线更清晰
                 # --- 🎨 选项美化开始 ---
                 if q.get('options') and isinstance(q['options'], list):
                     st.write("**选项：**")
@@ -899,5 +901,6 @@ elif menu == "❌ 错题本":
                                         final_history = temp_history + [{"role": "model", "content": ai_reply}]
                                         supabase.table("user_answers").update({"ai_chat_history": final_history}).eq("id", rec_id).execute()
                                         st.rerun()
+
 
 
