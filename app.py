@@ -582,6 +582,330 @@ elif menu == "📝 章节特训 (刷题)":
                             st.session_state.quiz_data = []
                             st.rerun()
 
+# === 页面：全真模考 (核心引擎) ===
+elif menu == "⚔️ 全真模考":
+    # 状态管理：是否正在考试
+    if 'exam_session' not in st.session_state:
+        st.session_state.exam_session = None # 存试卷数据
+    if 'exam_start_time' not in st.session_state:
+        st.session_state.exam_start_time = None
+
+    # --- 场景 A: 考试未开始 (配置台) ---
+    if not st.session_state.exam_session:
+        st.title("⚔️ 全真模拟考试")
+        st.caption("系统将从题库中随机抽取题目，组成一套符合中级会计标准的试卷。")
+        
+        subjects = get_subjects()
+        if not subjects: st.stop()
+        
+        col_set1, col_set2 = st.columns([2, 1])
+        with col_set1:
+            # 1. 考试配置
+            sub_names = [s['name'] for s in subjects]
+            sel_sub = st.selectbox("选择科目", sub_names)
+            sel_sub_id = next(s['id'] for s in subjects if s['name'] == sel_sub)
+            
+            mode = st.radio("试卷类型", ["🐇 精简版 (5题/快速自测)", "🐢 完整版 (20题/压力测试)"], horizontal=True)
+            
+            # 检查库存
+            total_q = supabase.table("question_bank").select("id", count="exact").eq("chapter_id", sel_sub_id).execute().count
+            # 注意：这里简化逻辑，直接查该科目下所有章节的题。实际应先查chapter再查题，或修改DB结构让题库直接关联subject。
+            # 为简化，假设你已录入足够的题。
+            
+            if st.button("🚀 生成试卷并开始", type="primary"):
+                # 组卷逻辑
+                limit = 5 if "精简" in mode else 20
+                
+                # 1. 获取该科目下所有章节ID
+                chaps = get_chapters(sel_sub_id, user_id)
+                chap_ids = [c['id'] for c in chaps]
+                
+                if not chap_ids:
+                    st.error("该科目下没有章节数据！")
+                else:
+                    # 2. 从题库抽题 (使用 RPC 或 内存随机)
+                    # 简单起见，拉取最近的 100 道题并在内存中随机
+                    all_qs = supabase.table("question_bank").select("*").in_("chapter_id", chap_ids).limit(100).execute().data
+                    
+                    if len(all_qs) < limit:
+                        st.warning(f"题库题目不足！当前只有 {len(all_qs)} 道，无法生成 {limit} 道的试卷。请先去资料库录题。")
+                    else:
+                        import random
+                        random.shuffle(all_qs)
+                        exam_paper = all_qs[:limit]
+                        
+                        # 初始化考试状态
+                        st.session_state.exam_session = {
+                            "paper": exam_paper,
+                            "answers": {}, # 用户答案
+                            "subject_name": sel_sub,
+                            "mode": mode,
+                            "submitted": False,
+                            "score_report": None
+                        }
+                        st.session_state.exam_start_time = datetime.datetime.now()
+                        st.rerun()
+
+        with col_set2:
+            # 历史记录
+            st.markdown("#### 📜 历史模考")
+            try:
+                history = supabase.table("mock_exams").select("title, user_score, created_at").eq("user_id", user_id).order("created_at", desc=True).limit(5).execute().data
+                if history:
+                    for h in history:
+                        date_str = h['created_at'][:10]
+                        st.markdown(f"<div style='font-size:13px; border-bottom:1px solid #eee; padding:5px;'>{date_str} - <b>{h['user_score']}分</b><br><span style='color:#888'>{h['title']}</span></div>", unsafe_allow_html=True)
+                else:
+                    st.write("暂无记录")
+            except:
+                st.write("加载失败")
+
+    # --- 场景 B: 正在考试 (沉浸模式) ---
+    else:
+        paper = st.session_state.exam_session['paper']
+        sub_name = st.session_state.exam_session['subject_name']
+        
+        # 顶部栏
+        c_timer, c_title, c_quit = st.columns([1, 2, 1])
+        with c_title:
+            st.markdown(f"<h3 style='text-align:center'>{sub_name} - 模拟考场</h3>", unsafe_allow_html=True)
+        with c_quit:
+            if st.button("退出考试"):
+                st.session_state.exam_session = None
+                st.rerun()
+        
+        # 题目渲染区域
+        with st.form("exam_form"):
+            for idx, q in enumerate(paper):
+                st.markdown(f"**第 {idx+1} 题：** {q['content']}")
+                
+                # 根据题型渲染不同输入组件
+                # 目前默认是单选，如果你录入了主观题，这里可以扩展
+                qid = str(q['id'])
+                
+                # 尝试判断是否为主观题 (简单逻辑：看有没有选项)
+                is_subjective = q['options'] is None or len(q['options']) == 0
+                
+                if is_subjective:
+                    st.text_area("请输入答案：", key=f"ans_{qid}")
+                else:
+                    # 选项处理
+                    opts = q['options']
+                    st.radio("选择：", opts, key=f"ans_{qid}", index=None)
+                
+                st.divider()
+            
+            submit_exam = st.form_submit_button("交卷", type="primary", use_container_width=True)
+        
+        # --- 交卷处理逻辑 ---
+        if submit_exam:
+            # 1. 收集答案
+            user_answers_map = {}
+            total_score = 0
+            max_score = len(paper) * 10 # 假设每题10分
+            
+            # 进度条提示
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            full_report = [] # 详细报告
+            
+            for i, q in enumerate(paper):
+                status_text.text(f"正在批改第 {i+1} 题...")
+                progress_bar.progress((i + 1) / len(paper))
+                
+                qid = str(q['id'])
+                u_ans_key = f"ans_{qid}"
+                
+                # 获取用户填写的答案
+                # Streamlit Form 中，Radio 返回选中的字符串，Text Area 返回文本
+                u_val = st.session_state.get(u_ans_key)
+                
+                # 判分逻辑
+                is_subjective = q['options'] is None or len(q['options']) == 0
+                
+                score = 0
+                ai_comment = ""
+                
+                if not u_val:
+                    u_val = "未作答"
+                
+                if is_subjective:
+                    # 🔥 AI 阅卷 (主观题)
+                    grading_prompt = f"""
+                    请你作为阅卷老师。
+                    题目：{q['content']}
+                    标准答案：{q['correct_answer']}
+                    考生回答：{u_val}
+                    
+                    请打分（满分10分），并给出简短评语。
+                    返回JSON: {{"score": 5, "comment": "回答不完整..."}}
+                    """
+                    try:
+                        res = call_gemini(grading_prompt)
+                        # 解析 AI 返回 (简化处理)
+                        res_json = json.loads(res['candidates'][0]['content']['parts'][0]['text'].replace("```json", "").replace("```", ""))
+                        score = res_json.get('score', 0)
+                        ai_comment = res_json.get('comment', '')
+                    except:
+                        score = 0
+                        ai_comment = "AI 阅卷失败，暂定0分"
+                        
+                else:
+                    # 客观题 (提取选项字母 A/B/C/D)
+                    # 假设选项格式是 "A. 选项内容"
+                    user_letter = u_val[0] if u_val and len(u_val) > 0 else "X"
+                    std_letter = q['correct_answer'][0] if q['correct_answer'] else "Y"
+                    
+                    if user_letter.upper() == std_letter.upper():
+                        score = 10
+                        ai_comment = "正确"
+                    else:
+                        score = 0
+                        ai_comment = "错误"
+                
+                total_score += score
+                
+                # 记录这道题的详情
+                full_report.append({
+                    "q_content": q['content'],
+                    "u_ans": u_val,
+                    "std_ans": q['correct_answer'],
+                    "score": score,
+                    "comment": ai_comment,
+                    "explanation": q['explanation']
+                })
+                
+                # 存入 user_answers 表 (用于弱项分析)
+                try:
+                    supabase.table("user_answers").insert({
+                        "user_id": user_id,
+                        "question_id": q['id'],
+                        "user_response": str(u_val),
+                        "is_correct": score == 10,
+                        "score": score
+                    }).execute()
+                except: pass
+
+            # 存入 mock_exams 表
+            try:
+                supabase.table("mock_exams").insert({
+                    "user_id": user_id,
+                    "title": f"{sub_name} - {datetime.date.today()}",
+                    "mode": "lite" if len(paper) < 10 else "full",
+                    "user_score": total_score,
+                    "exam_data": json.dumps(full_report) # 存下整套卷子详情
+                }).execute()
+            except Exception as e:
+                st.error(f"保存试卷失败: {e}")
+
+            # 显示结果
+            st.session_state.exam_session['submitted'] = True
+            st.session_state.exam_session['score_report'] = {
+                "total": total_score,
+                "max": max_score,
+                "details": full_report
+            }
+            st.rerun()
+
+        # --- 考后报告界面 ---
+        if st.session_state.exam_session.get('submitted'):
+            report = st.session_state.exam_session['score_report']
+            
+            st.balloons()
+            st.markdown(f"""
+            <div style="text-align:center; padding: 30px; background-color:white; border-radius:15px; box-shadow:0 4px 12px rgba(0,0,0,0.1);">
+                <h1 style="color:#00C090; font-size: 60px; margin:0;">{report['total']} <span style="font-size:20px; color:#666">/ {report['max']} 分</span></h1>
+                <p>考试结束！请查看下方详细解析</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.divider()
+            
+            for item in report['details']:
+                with st.expander(f"[{item['score']}分] {item['q_content'][:30]}...", expanded=item['score'] == 0):
+                    st.write(f"**题目：** {item['q_content']}")
+                    c1, c2 = st.columns(2)
+                    c1.error(f"你的回答：{item['u_ans']}")
+                    c2.success(f"正确答案：{item['std_ans']}")
+                    
+                    st.info(f"**解析/点评：** {item['comment']} \n\n {item['explanation']}")
+            
+            if st.button("结束回顾，返回首页"):
+                st.session_state.exam_session = None
+                st.rerun()
+
+
+# === 页面：弱项分析 (数据看板) ===
+elif menu == "📊 弱项分析":
+    st.title("📊 学习效果分析")
+    
+    # 获取所有做题记录
+    try:
+        # 联表查询有点复杂，我们先拉取 answer 表，再在 Python 里处理 (低成本方案)
+        answers = supabase.table("user_answers").select("*").eq("user_id", user_id).execute().data
+        
+        if not answers:
+            st.info("暂无做题数据，快去刷题吧！")
+        else:
+            df = pd.DataFrame(answers)
+            
+            # 1. 总体正确率仪表盘
+            total_qs = len(df)
+            correct_qs = len(df[df['is_correct'] == True])
+            acc_rate = round((correct_qs / total_qs) * 100, 1)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown(f"""
+                <div class="css-card">
+                    <h3 style="color:#2C3E50">总正确率</h3>
+                    <div style="font-size:40px; color:#00C090; font-weight:bold">{acc_rate}%</div>
+                    <div style="color:#888">基于 {total_qs} 次答题记录</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col2:
+                # 用 Plotly 画一个简单的每日刷题量柱状图
+                df['date'] = pd.to_datetime(df['created_at']).dt.date
+                daily_counts = df.groupby('date').size().reset_index(name='counts')
+                
+                import plotly.express as px
+                fig = px.bar(daily_counts, x='date', y='counts', title="每日刷题趋势", color_discrete_sequence=['#00C090'])
+                st.plotly_chart(fig, use_container_width=True)
+
+            # 2. 错题重灾区 (AI 分析)
+            st.subheader("🧠 弱项诊断报告")
+            
+            if st.button("生成 AI 诊断报告"):
+                with st.spinner("AI 正在分析你的错题记录..."):
+                    # 提取最近错题
+                    wrong_df = df[df['is_correct'] == False].tail(10) # 取最近10道错题
+                    if wrong_df.empty:
+                        st.success("最近表现完美，没有错题！")
+                    else:
+                        # 理想情况下应该联表查询题目内容，这里简化处理，假设我们只统计错题ID
+                        # 实际生产中，你应该 fetch question_bank 获取题目文本
+                        # 这里演示 Prompt 逻辑
+                        report_prompt = f"""
+                        用户最近做错了 {len(wrong_df)} 道题。
+                        请给出一段鼓励性但一针见血的学习建议。
+                        告诉他应该重点复习哪些方面（假设他是中级会计考生）。
+                        """
+                        res = call_gemini(report_prompt)
+                        if res:
+                            advice = res['candidates'][0]['content']['parts'][0]['text']
+                            st.markdown(f"""
+                            <div class="css-card" style="border-left: 5px solid #FFB74D;">
+                                <h4>🩺 AI 诊断意见：</h4>
+                                {advice}
+                            </div>
+                            """, unsafe_allow_html=True)
+
+    except Exception as e:
+        st.error(f"加载数据失败: {e}")
+
+
 
 
 
