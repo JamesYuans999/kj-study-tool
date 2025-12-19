@@ -169,7 +169,7 @@ def call_ai_universal(prompt, history=[]):
         if "Gemini" in provider:
             # 使用 secrets 中的 Google Key
             api_key = st.secrets["GOOGLE_API_KEY"]
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={api_key}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-robotics-er-1.5-preview:generateContent?key={api_key}"
             headers = {'Content-Type': 'application/json'}
             
             # 转换历史格式为 Gemini 格式
@@ -901,6 +901,7 @@ elif menu == "❌ 错题本":
                                         final_history = temp_history + [{"role": "model", "content": ai_reply}]
                                         supabase.table("user_answers").update({"ai_chat_history": final_history}).eq("id", rec_id).execute()
                                         st.rerun()
+
 
 
 
