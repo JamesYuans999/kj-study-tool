@@ -1,3 +1,145 @@
+import streamlit as st
+# ... 其他 import ...
+
+# --- 1. 全局配置与 Bootstrap 风格定义 ---
+st.set_page_config(page_title="中级会计冲刺班 Pro", page_icon="🥝", layout="wide")
+
+# 引入 Bootstrap Icons (图标库) 和 自定义高级 CSS
+st.markdown("""
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
+<style>
+    /* === 全局设定 (奶油绿主题) === */
+    .stApp {
+        background-color: #F9F9F0;
+        font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    }
+    
+    /* 侧边栏美化 */
+    [data-testid="stSidebar"] {
+        background-color: #FFFFFF;
+        border-right: 1px solid rgba(0,0,0,0.05);
+        box-shadow: 2px 0 10px rgba(0,0,0,0.02);
+    }
+
+    /* === Bootstrap 风格卡片 (核心) === */
+    .card {
+        background-color: #FFFFFF;
+        border: 1px solid rgba(0,0,0,0.08); /* 淡边框 */
+        border-radius: 12px; /* 圆角 */
+        padding: 20px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.02); /* 初始淡阴影 */
+        transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); /* 平滑动画 */
+        position: relative;
+        overflow: hidden;
+    }
+    
+    /* 鼠标悬停特效 (Hover Effect) */
+    .card:hover {
+        box-shadow: 0 12px 24px rgba(0,192,144, 0.15); /* 绿色光晕 */
+        transform: translateY(-4px); /* 向上浮动 */
+        border-color: #00C090;
+    }
+
+    /* === 数据大屏数字 === */
+    .stat-title {
+        color: #6c757d; /* Bootstrap muted color */
+        font-size: 0.9rem;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        font-weight: 600;
+        margin-bottom: 5px;
+    }
+    .stat-value {
+        font-size: 2.2rem;
+        font-weight: 700;
+        color: #2C3E50;
+    }
+    .stat-icon {
+        position: absolute;
+        right: 20px;
+        top: 20px;
+        font-size: 2.5rem;
+        color: rgba(0,192,144, 0.1); /* 浅绿色背景图标 */
+    }
+
+    /* === 按钮 Bootstrap 化 === */
+    .stButton>button {
+        background-color: #00C090;
+        color: white;
+        border-radius: 8px;
+        border: none;
+        padding: 0.5rem 1rem;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        box-shadow: 0 4px 6px rgba(0, 192, 144, 0.3);
+        transition: all 0.2s ease-in-out;
+        width: 100%;
+    }
+    .stButton>button:hover {
+        background-color: #00A87E;
+        box-shadow: 0 6px 12px rgba(0, 192, 144, 0.4);
+        transform: translateY(-1px);
+    }
+    .stButton>button:active {
+        transform: translateY(1px);
+        box-shadow: none;
+    }
+
+    /* === 选项列表美化 (List Group) === */
+    .list-group-item {
+        background-color: #fff;
+        border: 1px solid rgba(0,0,0,.125);
+        border-left: 5px solid #00C090;
+        border-radius: 0.375rem;
+        padding: 1rem;
+        margin-bottom: 0.5rem;
+        transition: background-color 0.2s;
+    }
+    .list-group-item:hover {
+        background-color: #F0FFF9;
+    }
+
+    /* === 悬浮计时器 (Pill Badge) === */
+    .timer-badge {
+        position: fixed; top: 70px; right: 30px; z-index: 9999;
+        background: linear-gradient(45deg, #00C090, #00E6AC);
+        color: white;
+        padding: 8px 20px;
+        border-radius: 50px;
+        font-weight: bold;
+        font-size: 1.1rem;
+        box-shadow: 0 4px 15px rgba(0,192,144, 0.4);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        animation: pulse 2s infinite;
+    }
+    
+    @keyframes pulse {
+        0% { box-shadow: 0 0 0 0 rgba(0, 192, 144, 0.7); }
+        70% { box-shadow: 0 0 0 10px rgba(0, 192, 144, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(0, 192, 144, 0); }
+    }
+    
+    /* 聊天气泡优化 */
+    .chat-bubble {
+        padding: 15px; border-radius: 15px; margin: 10px 0; position: relative; max-width: 90%;
+    }
+    .chat-ai {
+        background-color: #FFFFFF; 
+        border-left: 4px solid #00C090;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    }
+    .chat-user {
+        background-color: #E3F2FD; 
+        margin-left: auto;
+        color: #0D47A1;
+    }
+
+</style>
+""", unsafe_allow_html=True)
+
 from openai import OpenAI
 import streamlit as st
 import requests
@@ -451,10 +593,47 @@ if menu == "🏠 仪表盘":
     st.markdown(title_html, unsafe_allow_html=True)
     st.info(f"👨‍🏫 **班主任说：** {msg}")
 
+    # 2. 核心数据 Bento Grid (Bootstrap 风格)
     c1, c2, c3 = st.columns(3)
-    with c1: st.markdown(f"<div class='css-card'>📚 累计刷题<div class='big-number'>{profile.get('total_questions_done', 0)}</div></div>", unsafe_allow_html=True)
-    with c2: st.markdown(f"<div class='css-card'>🎯 目标分数<div class='big-number'>90+</div></div>", unsafe_allow_html=True)
-    with c3: st.markdown(f"<div class='css-card'>🔥 连续打卡<div class='big-number'>{profile.get('study_streak', 1)} 天</div></div>", unsafe_allow_html=True)
+    with c1:
+        st.markdown(f"""
+        <div class="card">
+            <i class="bi bi-collection-fill stat-icon"></i>
+            <div class="stat-title">累计刷题</div>
+            <div class="stat-value">{profile.get('total_questions_done', 0)}</div>
+            <div style="color:#00C090; font-size:0.8rem; margin-top:5px;">
+                <i class="bi bi-arrow-up-circle"></i> 持续进步中
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with c2:
+        # 正确率计算 (同前)
+        acc = "0%"
+        # ... (保留你之前的正确率计算逻辑) ...
+        
+        st.markdown(f"""
+        <div class="card">
+            <i class="bi bi-bullseye stat-icon"></i>
+            <div class="stat-title">正确率</div>
+            <div class="stat-value">{acc}</div>
+            <div class="progress" style="height: 6px; margin-top:10px; background-color:#eee; border-radius:3px;">
+                <div style="width: {acc}; height: 100%; background-color: #00C090; border-radius: 3px;"></div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with c3:
+        st.markdown(f"""
+        <div class="card">
+            <i class="bi bi-fire stat-icon" style="color: #FF7043;"></i>
+            <div class="stat-title">连续打卡</div>
+            <div class="stat-value">{profile.get('study_streak', 1)} <span style="font-size:1rem">天</span></div>
+            <div style="color:#888; font-size:0.8rem; margin-top:5px;">
+                <i class="bi bi-check-circle-fill" style="color:#00C090"></i> 今日已打卡
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
 # === ⚙️ 设置中心 ===
 elif menu == "⚙️ 设置中心":
@@ -560,7 +739,12 @@ elif menu == "📝 章节特训 (刷题)":
     # 只有在刷题激活状态下显示悬浮计时器
     if st.session_state.get('quiz_active'):
         el = int(time.time() - st.session_state.q_timer)
-        st.markdown(f"<div class='timer-box'>⏱️ {el//60:02d}:{el%60:02d}</div>", unsafe_allow_html=True)
+        # 使用 Bootstrap 图标 + 呼吸灯特效
+        st.markdown(f"""
+        <div class='timer-badge'>
+            <i class="bi bi-stopwatch-fill"></i> {el//60:02d}:{el%60:02d}
+        </div>
+        """, unsafe_allow_html=True)
 
     # --- 2. 章节选择与启动区 ---
     if not st.session_state.get('quiz_active'):
@@ -856,17 +1040,9 @@ elif menu == "❌ 错题本":
                     for opt in q['options']:
                         # 使用 HTML/CSS 渲染漂亮的选项卡片
                         st.markdown(f"""
-                        <div style="
-                            background-color: #F8F9FA; 
-                            border: 1px solid #E9ECEF;
-                            border-left: 4px solid #00C090; /* 呼应主色调 */
-                            border-radius: 8px;
-                            padding: 10px 15px;
-                            margin-bottom: 8px;
-                            font-size: 15px;
-                            color: #495057;
-                            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-                        ">
+                        <div class="list-group-item">
+                            <i class="bi bi-circle"></i> {opt}
+                        </div>
                             {opt}
                         </div>
                         """, unsafe_allow_html=True)
@@ -937,6 +1113,7 @@ elif menu == "❌ 错题本":
                                         final_history = temp_history + [{"role": "model", "content": ai_reply}]
                                         supabase.table("user_answers").update({"ai_chat_history": final_history}).eq("id", rec_id).execute()
                                         st.rerun()
+
 
 
 
