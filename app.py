@@ -768,8 +768,12 @@ elif menu == "📊 弱项分析":
 elif menu == "❌ 错题本":
     st.title("❌ 错题集 & 智能私教")
     
-    # 获取所有错题 (按时间倒序，这样我们能保留最近的一次记录)
-    errs = supabase.table("user_answers").select("*, question_bank(*)").eq("user_id", user_id).eq("is_correct", False).order("created_at", desc=True).execute().data
+    # 1. 获取所有错题 (按时间倒序)
+    try:
+        errs = supabase.table("user_answers").select("*, question_bank(*)").eq("user_id", user_id).eq("is_correct", False).order("created_at", desc=True).execute().data
+    except Exception as e:
+        st.error(f"数据加载失败: {e}")
+        errs = []
     
     if not errs:
         st.markdown("""
@@ -779,30 +783,37 @@ elif menu == "❌ 错题本":
         </div>
         """, unsafe_allow_html=True)
     else:
-        # --- 🔥 核心去重逻辑 ---
+        # --- 🔥 核心去重逻辑 (防止报错的关键) ---
         unique_mistakes = []
         seen_qids = set()
         
         for e in errs:
+            # 确保数据完整
+            if not e.get('question_bank'): continue
+            
             qid = e['question_id']
-            # 如果这个题ID还没出现过，就加入列表；如果出现过，说明是旧的重复记录，跳过
+            # 只有当这个题目ID第一次出现时才显示 (保留最近的一条记录)
             if qid not in seen_qids:
                 unique_mistakes.append(e)
                 seen_qids.add(qid)
-        # ---------------------
-
-        st.info(f"当前共有 {len(unique_mistakes)} 道错题待复习")
         
+        st.info(f"当前共有 {len(unique_mistakes)} 道错题待复习 (已自动合并重复记录)")
+        
+        # 2. 循环渲染
         for i, e in enumerate(unique_mistakes):
             q = e['question_bank']
-            if not q: continue
             
-            # 获取聊天记录
+            # 使用 record_id 作为唯一 Key，配合去重逻辑，确保绝对不报错
+            rec_id = e['id']
+            q_id = q['id']
+            
+            # 获取历史对话
             db_chat_history = e.get('ai_chat_history') or []
             
+            # 卡片展示
             with st.expander(f"🔴 {q['content'][:30]}... (点击展开)"):
                 st.markdown(f"**题目：** {q['content']}")
-                if q['options']:
+                if q.get('options'):
                     st.markdown(f"**选项：** {q['options']}")
                 
                 c1, c2 = st.columns(2)
@@ -813,94 +824,61 @@ elif menu == "❌ 错题本":
                 
                 st.divider()
                 
-                # --- AI 互动区 (保持不变) ---
-                # (此处代码与之前相同，为了节省篇幅简写，请保留你原来的 AI 互动按钮和逻辑)
-                # ... (AI 举例、清除记忆、移出错题本等按钮逻辑) ...
+                # --- 功能按钮区 ---
+                col_ask, col_clear, col_del = st.columns([1.2, 1, 1])
                 
-                # 为了方便你复制，这里补全核心按钮逻辑：
-                col_ask, col_clear, col_del = st.columns([1, 1, 2])
+                # 按钮 1: AI 举例 (带 Key 防止冲突)
+                # 逻辑：如果没有历史，显示"举例子"；如果有历史，显示"继续追问"的提示
+                btn_label = "🤔 我不理解 (AI举例)" if not db_chat_history else "✨ 继续追问 AI"
                 
+                # 仅当没有历史记录时，这个按钮触发初始化举例
                 if not db_chat_history:
-                    if col_ask.button("🤔 举个生活例子", key=f"init_ask_{e['id']}"):
-                        prompt = f"用户做错题：'{q['content']}'。答案{q['correct_answer']}。解析{q['explanation']}。请用生活案例解释。"
-                        with st.spinner("AI 思考中..."):
+                    if col_ask.button(btn_label, key=f"btn_ask_{rec_id}"):
+                        prompt = f"用户做错题：'{q['content']}'。答案{q['correct_answer']}。解析{q['explanation']}。请用生活案例通俗解释。"
+                        with st.spinner("AI 正在思考..."):
                             res = call_ai_universal(prompt)
                             if res:
                                 new_h = [{"role": "model", "content": res}]
-                                supabase.table("user_answers").update({"ai_chat_history": new_h}).eq("id", e['id']).execute()
+                                supabase.table("user_answers").update({"ai_chat_history": new_h}).eq("id", rec_id).execute()
                                 st.rerun()
                 else:
-                    if col_clear.button("🗑️ 清除记忆", key=f"clr_{e['id']}"):
-                        supabase.table("user_answers").update({"ai_chat_history": []}).eq("id", e['id']).execute()
+                    col_ask.caption("👇 在下方对话框继续提问")
+
+                # 按钮 2: 清除记忆
+                if db_chat_history:
+                    if col_clear.button("🗑️ 清除记忆", key=f"btn_clr_{rec_id}"):
+                        supabase.table("user_answers").update({"ai_chat_history": []}).eq("id", rec_id).execute()
                         st.rerun()
 
-                if col_del.button("✅ 已掌握，移除", key=f"rm_{e['id']}"):
-                    # 彻底移除：把该题目ID下的所有错题记录都标记为正确 (防止旧记录复活)
-                    supabase.table("user_answers").update({"is_correct": True}).eq("user_id", user_id).eq("question_id", q['id']).execute()
-                    st.toast("已移出")
+                # 按钮 3: 移除错题 (批量移除该题目的所有记录)
+                if col_del.button("✅ 已掌握", key=f"btn_rm_{rec_id}"):
+                    # 🔥 关键：根据 question_id 把所有重复的错误记录都标记为正确，防止旧记录复活
+                    supabase.table("user_answers").update({"is_correct": True}).eq("user_id", user_id).eq("question_id", q_id).execute()
+                    st.toast("已彻底移出！")
                     time.sleep(0.5)
                     st.rerun()
 
-                # 显示对话
+                # --- 聊天流展示 ---
                 if db_chat_history:
+                    st.markdown("---")
+                    st.caption("🤖 AI 私教对话记录")
                     for msg in db_chat_history:
-                        style = "chat-ai" if msg['role'] == "model" else "chat-user"
-                        st.markdown(f"<div class='{style}'>{msg['content']}</div>", unsafe_allow_html=True)
-                    else:
-                        st.caption("暂无提问记录。点击下方按钮让 AI 举个栗子 👇")
-
-                # 2. 交互按钮区
-                col_ask, col_clear, col_del = st.columns([1, 1, 2])
-                
-                # 【按钮 A】: 第一次请求举例 (仅当没有历史记录时显示，或者用户想重新生成)
-                if not db_chat_history:
-                    if col_ask.button("🤔 我不理解，举个生活例子", key=f"init_ask_{e['id']}"):
-                        prompt = f"用户做错了这道会计题：'{q['content']}'。答案是{q['correct_answer']}。解析是：{q['explanation']}。请用通俗的生活案例（如买菜、开店）来类比解释这个知识点。"
-                        
-                        with st.spinner("AI 正在头脑风暴..."):
-                            res = call_ai_universal(prompt)
-                            if res:
-                                # 更新本地和数据库
-                                new_history = [{"role": "model", "content": res}]
-                                supabase.table("user_answers").update({"ai_chat_history": new_history}).eq("id", e['id']).execute()
-                                st.rerun() # 刷新页面显示新内容
-
-                # 【按钮 B】: 清空对话记录 (节省空间/重新提问)
-                else:
-                    if col_clear.button("🗑️ 清除对话记忆", key=f"clr_{e['id']}"):
-                        supabase.table("user_answers").update({"ai_chat_history": []}).eq("id", e['id']).execute()
-                        st.toast("记忆已清除")
-                        st.rerun()
-
-                # 【按钮 C】: 彻底移除错题 (已掌握)
-                if col_del.button("✅ 我学会了，移出错题本", key=f"rm_{e['id']}"):
-                    supabase.table("user_answers").update({"is_correct": True}).eq("id", e['id']).execute()
-                    st.toast("恭喜！消灭一道错题！")
-                    time.sleep(0.5)
-                    st.rerun()
-
-                # 3. 追问输入框 (仅当有历史记录或已开始对话时显示)
-                if db_chat_history:
-                    with st.form(key=f"chat_form_{e['id']}"):
-                        user_input = st.text_input("继续追问 (例如：那如果是卖方呢？)", placeholder="在此输入你的疑问...")
-                        submit_chat = st.form_submit_button("发送追问 ⬆️")
-                        
-                        if submit_chat and user_input:
-                            # 1. 把用户问题加入历史
-                            temp_history = db_chat_history + [{"role": "user", "content": user_input}]
-                            
-                            with st.spinner("AI 正在思考..."):
-                                # 2. 调用 AI (带上下文)
-                                ai_reply = call_ai_universal(user_input, history=db_chat_history)
+                        css = "chat-ai" if msg['role'] == "model" else "chat-user"
+                        prefix = "🤖 AI" if msg['role'] == "model" else "👤 我"
+                        st.markdown(f"<div class='{css}'><b>{prefix}:</b><br>{msg['content']}</div>", unsafe_allow_html=True)
+                    
+                    # 追问输入框 (使用 Form 避免刷新重置)
+                    with st.form(key=f"form_chat_{rec_id}"):
+                        user_input = st.text_input("继续追问...", placeholder="例如：那如果是反过来呢？")
+                        if st.form_submit_button("发送 ⬆️"):
+                            if user_input:
+                                # 构建新历史
+                                temp_history = db_chat_history + [{"role": "user", "content": user_input}]
                                 
-                                if ai_reply:
-                                    # 3. 把 AI 回复也加入历史
-                                    final_history = temp_history + [{"role": "model", "content": ai_reply}]
-                                    
-                                    # 4. 存入数据库
-                                    supabase.table("user_answers").update({"ai_chat_history": final_history}).eq("id", e['id']).execute()
-                                    st.rerun()
-
-
-
+                                with st.spinner("AI 正在回复..."):
+                                    ai_reply = call_ai_universal(user_input, history=db_chat_history)
+                                    if ai_reply:
+                                        final_history = temp_history + [{"role": "model", "content": ai_reply}]
+                                        supabase.table("user_answers").update({"ai_chat_history": final_history}).eq("id", rec_id).execute()
+                                        st.rerun()
 
