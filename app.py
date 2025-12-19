@@ -309,6 +309,35 @@ def update_settings(user_id, settings_dict):
         return False
 
 # ------------------------------------------------
+def save_ai_settings():
+    """
+    回调函数：当用户切换 服务商 或 模型 时，自动保存配置到数据库
+    """
+    if st.session_state.get('user_id'):
+        # 1. 获取当前选中的服务商 (从 key='ai_provider_select' 获取)
+        current_provider = st.session_state.get('ai_provider_select')
+        
+        # 2. 获取当前选中的模型
+        # 因为不同服务商对应不同的 selectbox key，我们需要判断
+        current_model = None
+        if current_provider and "OpenRouter" in current_provider:
+            current_model = st.session_state.get('openrouter_model_select')
+        elif current_provider and "DeepSeek" in current_provider:
+            current_model = st.session_state.get('deepseek_model_select')
+        elif current_provider and "Gemini" in current_provider:
+            current_model = st.session_state.get('google_model_select')
+            
+        # 3. 存入数据库
+        settings_to_update = {}
+        if current_provider:
+            settings_to_update["last_provider"] = current_provider
+        if current_model:
+            settings_to_update["last_used_model"] = current_model
+            
+        if settings_to_update:
+            update_settings(st.session_state.user_id, settings_to_update)
+            # st.toast("配置已同步云端", icon="☁️") # 可选：嫌烦可以注释掉提示
+# ------------------------------------------------
 
 def save_model_preference():
     """回调函数：当用户改变模型时，自动保存到 Supabase"""
@@ -446,16 +475,38 @@ profile = get_user_profile(user_id)
 with st.sidebar:
     st.title("🥝 备考中心")
     
-    # --- 1. AI 大脑设置 (修复报错版) ---
+# --- 1. AI 大脑设置 (最终完整版：全动态+全记忆) ---
+    
+    # A. 准备服务商列表
+    provider_options = ["Gemini (官方直连)", "DeepSeek (官方直连)", "OpenRouter (聚合平台)"]
+    
+    # B. 读取数据库里的旧设置 (用于记忆回显)
+    # 确保 profile 和 user_settings 已定义
+    user_settings = profile.get('settings') or {}
+    saved_provider = user_settings.get('last_provider')
+    saved_model = user_settings.get('last_used_model')
+    
+    # C. 计算服务商的默认 Index (记忆功能)
+    provider_index = 0
+    # 模糊匹配，防止因为选项文字微调导致匹配失败
+    for i, opt in enumerate(provider_options):
+        if saved_provider and saved_provider.split(" ")[0] in opt:
+            provider_index = i
+            break
+    
+    # D. 渲染服务商选择框 (绑定 on_change=save_ai_settings)
     ai_provider = st.selectbox(
         "🧠 AI 大脑", 
-        ["Gemini (官方直连)", "DeepSeek (官方直连)", "OpenRouter (聚合平台)"]
+        provider_options,
+        index=provider_index,
+        key="ai_provider_select", # 绑定 Key 用于回调
+        on_change=save_ai_settings # 🔥 切换服务商时自动保存
     )
     st.session_state.selected_provider = ai_provider
     
     target_model_id = None
-
-     # === 分支 A: Google Gemini ===
+    
+    # === 分支 A: Google Gemini ===
     if "Gemini" in ai_provider:
         g_key = st.secrets["GOOGLE_API_KEY"]
         
@@ -463,74 +514,81 @@ with st.sidebar:
         with st.spinner("同步 Google 模型库..."):
             g_models = fetch_google_models(g_key)
         
-        # 2. 保底列表 (万一联网失败)
+        # 2. 保底列表
         g_backups = ["gemini-2.0-flash-exp", "gemini-1.5-flash", "gemini-1.5-pro"]
-        
         final_g_opts = g_models if g_models else g_backups
         
-        # 3. 选择框
+        # 3. 计算记忆 Index
+        g_idx = 0
+        if saved_model in final_g_opts: 
+            g_idx = final_g_opts.index(saved_model)
+        
+        # 4. 渲染选择框
         target_model_id = st.selectbox(
             "🔌 选择 Gemini 版本", 
             final_g_opts,
-            index=0,
+            index=g_idx,
             key="google_model_select",
-            on_change=save_model_preference
+            on_change=save_ai_settings
         )
         st.session_state.google_model_id = target_model_id
-    
-    # === OpenRouter 专属逻辑 ===
-    if "OpenRouter" in ai_provider:
-        # 1. 获取 Key
+
+    # === 分支 B: DeepSeek ===
+    elif "DeepSeek" in ai_provider:
+        # DeepSeek 官方目前主要就是这两个
+        d_opts = ["deepseek-chat", "deepseek-reasoner"]
+        
+        # 计算记忆 Index
+        d_idx = 0
+        if saved_model in d_opts: 
+            d_idx = d_opts.index(saved_model)
+        
+        target_model_id = st.selectbox(
+            "🔌 选择 DeepSeek 版本", 
+            d_opts,
+            index=d_idx,
+            key="deepseek_model_select",
+            on_change=save_ai_settings,
+            help="Chat (V3) 速度快，Reasoner (R1) 逻辑强"
+        )
+        st.session_state.deepseek_model_id = target_model_id
+
+    # === 分支 C: OpenRouter ===
+    elif "OpenRouter" in ai_provider:
         or_key = st.secrets.get("openrouter", {}).get("api_key")
         
-        # 2. 获取上次保存的模型 (记忆功能)
-        user_settings = profile.get('settings') or {}
-        last_used_model = user_settings.get('last_used_model')
-        
-        # 3. 联网获取列表 (调用新函数)
+        # 1. 联网获取
         all_models = fetch_openrouter_models(or_key)
         
         if not all_models:
-            st.warning("⚠️ 无法连接 OpenRouter，使用默认列表")
-            filtered_ids = ["google/gemini-2.0-flash-exp:free", "deepseek/deepseek-r1:free"]
+            st.caption("⚠️ 离线模式 (无法连接 OpenRouter)")
+            final_ids = ["google/gemini-2.0-flash-exp:free", "deepseek/deepseek-r1:free"]
         else:
-            # 4. 筛选器 (解决你之前的需求)
-            filter_type = st.radio("模型筛选", ["🤑 仅显示免费", "🌎 显示全部"], horizontal=True)
+            # 2. 筛选逻辑
+            filter_type = st.radio("筛选", ["🤑 免费", "🌎 全部"], horizontal=True)
             
             if "免费" in filter_type:
                 filtered_models = [m for m in all_models if m['is_free']]
             else:
                 filtered_models = all_models
             
-            filtered_ids = [m['id'] for m in filtered_models]
-            if not filtered_ids: filtered_ids = [m['id'] for m in all_models]
+            final_ids = [m['id'] for m in filtered_models]
+            if not final_ids: final_ids = [m['id'] for m in all_models]
 
-        # 5. 智能定位默认值
-        default_index = 0
-        if last_used_model in filtered_ids:
-            default_index = filtered_ids.index(last_used_model)
+        # 3. 计算记忆 Index
+        or_idx = 0
+        if saved_model in final_ids:
+            or_idx = final_ids.index(saved_model)
         
-        # 6. 渲染选择框
+        # 4. 渲染选择框
         target_model_id = st.selectbox(
-            "🔌 选择模型",
-            filtered_ids,
-            index=default_index,
+            "🔌 选择 OpenRouter 模型",
+            final_ids,
+            index=or_idx,
             key="openrouter_model_select",
-            on_change=save_model_preference,
-            help="选择的模型会自动保存，下次打开默认选中"
+            on_change=save_ai_settings
         )
-        
-        # 显示是否免费
-        is_free_tag = "🆓 免费" if ":free" in target_model_id or "free" in target_model_id.lower() else "💲 可能收费"
-        st.caption(f"当前: `{target_model_id}` ({is_free_tag})")
-
-    # === DeepSeek 专属逻辑 ===
-    elif "DeepSeek" in ai_provider:
-        # DeepSeek 官方只有两个主要模型
-        target_model_id = st.selectbox("🔌 选择 DeepSeek 版本", ["deepseek-chat", "deepseek-reasoner"])
-
-    # 存入全局状态
-    st.session_state.openrouter_model_id = target_model_id
+        st.session_state.openrouter_model_id = target_model_id
 
     st.divider()
 
@@ -1113,6 +1171,7 @@ elif menu == "❌ 错题本":
                                         final_history = temp_history + [{"role": "model", "content": ai_reply}]
                                         supabase.table("user_answers").update({"ai_chat_history": final_history}).eq("id", rec_id).execute()
                                         st.rerun()
+
 
 
 
