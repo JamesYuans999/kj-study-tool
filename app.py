@@ -812,9 +812,27 @@ elif menu == "❌ 错题本":
             
             # 卡片展示
             with st.expander(f"🔴 {q['content'][:30]}... (点击展开)"):
-                st.markdown(f"**题目：** {q['content']}")
-                if q.get('options'):
-                    st.markdown(f"**选项：** {q['options']}")
+                # --- 🎨 选项美化开始 ---
+                if q.get('options') and isinstance(q['options'], list):
+                    st.write("**选项：**")
+                    for opt in q['options']:
+                        # 使用 HTML/CSS 渲染漂亮的选项卡片
+                        st.markdown(f"""
+                        <div style="
+                            background-color: #F8F9FA; 
+                            border: 1px solid #E9ECEF;
+                            border-left: 4px solid #00C090; /* 呼应主色调 */
+                            border-radius: 8px;
+                            padding: 10px 15px;
+                            margin-bottom: 8px;
+                            font-size: 15px;
+                            color: #495057;
+                            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+                        ">
+                            {opt}
+                        </div>
+                        """, unsafe_allow_html=True)
+                # --- 🎨 选项美化结束 ---
                 
                 c1, c2 = st.columns(2)
                 c1.error(f"你的错选：{e['user_response']}")
@@ -881,4 +899,5 @@ elif menu == "❌ 错题本":
                                         final_history = temp_history + [{"role": "model", "content": ai_reply}]
                                         supabase.table("user_answers").update({"ai_chat_history": final_history}).eq("id", rec_id).execute()
                                         st.rerun()
+
 
