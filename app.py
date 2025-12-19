@@ -73,41 +73,51 @@ def init_supabase():
 supabase = init_supabase()
 
 @st.cache_data(ttl=3600)  # 缓存1小时，避免频繁请求卡顿
-def fetch_available_models(provider, api_key, base_url):
+def fetch_openrouter_models(api_key):
     """
-    动态获取 API 提供的模型列表
+    获取 OpenRouter 模型列表，并标记是否免费
+    返回格式: [{'id': '...', 'name': '...', 'is_free': True/False}, ...]
     """
+    if not api_key: return []
+    
+    url = "https://openrouter.ai/api/v1/models"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    
     try:
-        # 如果没有配置 Key，直接返回空，避免报错
-        if not api_key: return []
-        
-        # 构造标准的 OpenAI 格式模型列表 URL
-        # OpenRouter 和 DeepSeek 都遵循这个标准: GET /models
-        url = f"{base_url.rstrip('/')}/models"
-        
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
-        
-        # OpenRouter 需要额外的 Referer 头，否则有时会拒收
-        if "openrouter" in base_url:
-            headers["HTTP-REFERER"] = "https://streamlit-app.com" 
-            headers["X-TITLE"] = "My Study App"
-
-        response = requests.get(url, headers=headers, timeout=5)
-        
+        response = requests.get(url, headers=headers, timeout=10)
         if response.status_code == 200:
-            data = response.json()
-            # OpenRouter 返回的数据在 'data' 字段里
-            model_list = data.get('data', [])
-            # 提取模型 ID 并排序
-            ids = [m['id'] for m in model_list]
-            return sorted(ids)
-        else:
-            return []
-    except Exception:
+            raw_data = response.json().get('data', [])
+            processed_list = []
+            
+            for m in raw_data:
+                # 核心逻辑：检查定价是否为 0
+                pricing = m.get('pricing', {})
+                prompt_price = float(pricing.get('prompt', 0))
+                completion_price = float(pricing.get('completion', 0))
+                
+                # 判定免费：价格为0 或者 ID以此为结尾 (OpenRouter惯例)
+                is_free = (prompt_price == 0 and completion_price == 0) or m['id'].endswith(':free')
+                
+                processed_list.append({
+                    "id": m['id'],
+                    "name": m.get('name', m['id']),
+                    "is_free": is_free
+                })
+            
+            # 按字母排序
+            return sorted(processed_list, key=lambda x: x['id'])
         return []
+    except:
+        return []
+        
+def save_model_preference():
+    """回调函数：当用户改变模型时，自动保存到 Supabase"""
+    if st.session_state.get('user_id') and st.session_state.get('openrouter_model_select'):
+        current_model = st.session_state.openrouter_model_select
+        # 更新数据库
+        update_settings(st.session_state.user_id, {"last_used_model": current_model})
+        st.toast(f"已记住模型：{current_model}", icon="💾")
+
 
 def call_ai_universal(prompt, history=[]):
     """
@@ -248,13 +258,69 @@ profile = get_user_profile(user_id)
 with st.sidebar:
     st.title("🥝 备考中心")
     
-    # --- 1. AI 大脑设置 (动态联网版) ---
+    # --- 1. AI 大脑设置 (终极版：筛选+记忆) ---
     ai_provider = st.selectbox(
         "🧠 AI 大脑", 
         ["Gemini (官方直连)", "DeepSeek (官方直连)", "OpenRouter (聚合平台)"]
     )
+    st.session_state.selected_provider = ai_provider
     
-    target_model_id = None # 初始化
+    target_model_id = None
+    
+    # === OpenRouter 专属逻辑 ===
+    if "OpenRouter" in ai_provider:
+        # 1. 获取 Key
+        or_key = st.secrets.get("openrouter", {}).get("api_key")
+        
+        # 2. 获取上次保存的模型 (记忆功能)
+        user_settings = profile.get('settings') or {}
+        last_used_model = user_settings.get('last_used_model')
+        
+        # 3. 联网获取列表
+        all_models = fetch_openrouter_models(or_key)
+        
+        if not all_models:
+            st.warning("⚠️ 无法连接 OpenRouter，使用默认列表")
+            # 保底列表
+            filtered_ids = ["google/gemini-2.0-flash-exp:free", "deepseek/deepseek-r1:free"]
+        else:
+            # 4. 筛选器 (Filter)
+            filter_type = st.radio("模型筛选", ["🤑 仅显示免费", "🌎 显示全部"], horizontal=True)
+            
+            # 根据筛选器过滤数据
+            if "免费" in filter_type:
+                filtered_models = [m for m in all_models if m['is_free']]
+            else:
+                filtered_models = all_models
+            
+            # 提取 ID 列表
+            filtered_ids = [m['id'] for m in filtered_models]
+            
+            # 如果列表为空（比如筛选免费但没找到），回退到全部
+            if not filtered_ids: filtered_ids = [m['id'] for m in all_models]
+
+        # 5. 智能定位默认值 (记忆功能的实现)
+        default_index = 0
+        if last_used_model in filtered_ids:
+            default_index = filtered_ids.index(last_used_model)
+        
+        # 6. 渲染选择框 (绑定回调函数实现自动保存)
+        target_model_id = st.selectbox(
+            "🔌 选择模型",
+            filtered_ids,
+            index=default_index,
+            key="openrouter_model_select", # 绑定到 session_state
+            on_change=save_model_preference, # 🔥 变化时自动触发保存
+            help="选择的模型会自动保存，下次打开默认选中"
+        )
+        
+        # 显示是否免费的标记
+        is_free_tag = "🆓 免费" if ":free" in target_model_id or "free" in target_model_id.lower() else "💲 可能收费"
+        st.caption(f"当前: `{target_model_id}` ({is_free_tag})")
+
+    # 存入全局状态供调用
+    st.session_state.openrouter_model_id = target_model_id
+
     
     # === 分支 A: OpenRouter 动态列表 ===
     if "OpenRouter" in ai_provider:
@@ -757,4 +823,5 @@ elif menu == "❌ 错题本":
                                     # 4. 存入数据库
                                     supabase.table("user_answers").update({"ai_chat_history": final_history}).eq("id", e['id']).execute()
                                     st.rerun()
+
 
