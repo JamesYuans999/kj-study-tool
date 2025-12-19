@@ -202,7 +202,7 @@ def call_ai_universal(prompt, history=[]):
             contents.append({"role": "user", "parts": [{"text": prompt}]})
             
             data = {"contents": contents}
-            response = requests.post(url, headers=headers, json=data, timeout=30)
+            response = requests.post(url, headers=headers, json=data, timeout=180)
             
             if response.status_code == 200:
                 return response.json()['candidates'][0]['content']['parts'][0]['text']
@@ -937,6 +937,7 @@ elif menu == "❌ 错题本":
                                         final_history = temp_history + [{"role": "model", "content": ai_reply}]
                                         supabase.table("user_answers").update({"ai_chat_history": final_history}).eq("id", rec_id).execute()
                                         st.rerun()
+
 
 
 
