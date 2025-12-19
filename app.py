@@ -179,25 +179,22 @@ def save_model_preference():
 
 def call_ai_universal(prompt, history=[]):
     """
-    通用 AI 调用接口 (支持 Gemini / DeepSeek / OpenRouter)
-    自动读取 st.session_state 中的模型配置
+    通用 AI 调用接口 (全动态模型版)
     """
-    # 1. 获取用户选择的厂商 (默认为 Gemini)
     provider = st.session_state.get('selected_provider', 'Gemini')
-    
-    # 2. 获取具体模型 ID (如果是 OpenRouter 或 DeepSeek)
-    # 默认为 Gemini 2.0 Flash (OpenRouter上的免费神模)
-    target_model = st.session_state.get('openrouter_model_id', 'google/gemini-2.0-flash-exp:free')
     
     try:
         # === 分支 A: Google Gemini 官方直连 ===
         if "Gemini" in provider:
-            # 使用 secrets 中的 Google Key
             api_key = st.secrets["GOOGLE_API_KEY"]
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-robotics-er-1.5-preview:generateContent?key={api_key}"
-            headers = {'Content-Type': 'application/json'}
             
-            # 转换历史格式为 Gemini 格式
+            # 🔥 动态获取用户选择的模型，如果没有选，兜底用 1.5-flash
+            model_id = st.session_state.get("google_model_id", "gemini-1.5-flash")
+            
+            # Google API URL 构造需要把模型名拼进去
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={api_key}"
+            
+            headers = {'Content-Type': 'application/json'}
             contents = []
             for h in history:
                 role = "user" if h['role'] == 'user' else "model"
@@ -205,8 +202,6 @@ def call_ai_universal(prompt, history=[]):
             contents.append({"role": "user", "parts": [{"text": prompt}]})
             
             data = {"contents": contents}
-            
-            # 发送请求
             response = requests.post(url, headers=headers, json=data, timeout=30)
             
             if response.status_code == 200:
@@ -214,50 +209,43 @@ def call_ai_universal(prompt, history=[]):
             else:
                 return f"Gemini 报错 ({response.status_code}): {response.text}"
 
-        # === 分支 B: OpenAI 兼容接口 (DeepSeek / OpenRouter) ===
-        else:
-            client = None
+        # === 分支 B: DeepSeek 官方直连 ===
+        elif "DeepSeek" in provider:
+            client = OpenAI(
+                api_key=st.secrets["deepseek"]["api_key"], 
+                base_url=st.secrets["deepseek"]["base_url"]
+            )
+            # 🔥 动态获取 DeepSeek 模型 (chat 或 reasoner)
+            model_id = st.session_state.get("deepseek_model_id", "deepseek-chat")
             
-            # 配置客户端
-            if "DeepSeek" in provider:
-                if "deepseek" not in st.secrets: return "请在 secrets.toml 配置 [deepseek]"
-                client = OpenAI(
-                    api_key=st.secrets["deepseek"]["api_key"], 
-                    base_url=st.secrets["deepseek"]["base_url"]
-                )
-                # DeepSeek 官方 API 通常只支持 deepseek-chat 或 deepseek-reasoner
-                # 如果 target_model 是 OpenRouter 的格式，这里强制修正为 deepseek-chat
-                if "/" in target_model: target_model = "deepseek-chat"
-                
-            elif "OpenRouter" in provider:
-                if "openrouter" not in st.secrets: return "请在 secrets.toml 配置 [openrouter]"
-                client = OpenAI(
-                    api_key=st.secrets["openrouter"]["api_key"], 
-                    base_url=st.secrets["openrouter"]["base_url"]
-                )
-                # OpenRouter 必须使用完整的 model id (如 google/gemini...)
-
-            if not client: return "AI 客户端初始化失败"
-
-            # 转换历史格式为 OpenAI 格式
-            messages = [{"role": "system", "content": "你是一位资深会计讲师，擅长用通俗的生活案例解释复杂的财务概念。"}]
+            messages = [{"role": "system", "content": "你是一位会计专家。"}]
             for h in history:
-                # 兼容 Gemini 的 'model' 角色名转为 'assistant'
+                messages.append({"role": h['role'], "content": h['content']})
+            messages.append({"role": "user", "content": prompt})
+
+            response = client.chat.completions.create(model=model_id, messages=messages)
+            return response.choices[0].message.content
+
+        # === 分支 C: OpenRouter ===
+        elif "OpenRouter" in provider:
+            client = OpenAI(
+                api_key=st.secrets["openrouter"]["api_key"], 
+                base_url=st.secrets["openrouter"]["base_url"]
+            )
+            # 🔥 动态获取 OpenRouter 模型
+            model_id = st.session_state.get("openrouter_model_id", "google/gemini-2.0-flash-exp:free")
+            
+            messages = [{"role": "system", "content": "你是一位会计专家。"}]
+            for h in history:
                 role = "assistant" if h['role'] == "model" else h['role']
                 messages.append({"role": role, "content": h['content']})
             messages.append({"role": "user", "content": prompt})
 
-            # 发送请求
-            response = client.chat.completions.create(
-                model=target_model,
-                messages=messages,
-                temperature=0.7
-            )
+            response = client.chat.completions.create(model=model_id, messages=messages)
             return response.choices[0].message.content
 
     except Exception as e:
-        return f"AI 调用发生异常: {str(e)}"
-
+        return f"AI 调用异常: {str(e)}"
 
 # --- 文档处理函数 ---
 def extract_text_from_pdf(file, start_page=1, end_page=None):
@@ -949,6 +937,7 @@ elif menu == "❌ 错题本":
                                         final_history = temp_history + [{"role": "model", "content": ai_reply}]
                                         supabase.table("user_answers").update({"ai_chat_history": final_history}).eq("id", rec_id).execute()
                                         st.rerun()
+
 
 
 
