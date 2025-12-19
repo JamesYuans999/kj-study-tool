@@ -72,21 +72,64 @@ def init_supabase():
 
 supabase = init_supabase()
 
+@st.cache_data(ttl=3600)  # 缓存1小时，避免频繁请求卡顿
+def fetch_available_models(provider, api_key, base_url):
+    """
+    动态获取 API 提供的模型列表
+    """
+    try:
+        # 如果没有配置 Key，直接返回空，避免报错
+        if not api_key: return []
+        
+        # 构造标准的 OpenAI 格式模型列表 URL
+        # OpenRouter 和 DeepSeek 都遵循这个标准: GET /models
+        url = f"{base_url.rstrip('/')}/models"
+        
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        # OpenRouter 需要额外的 Referer 头，否则有时会拒收
+        if "openrouter" in base_url:
+            headers["HTTP-REFERER"] = "https://streamlit-app.com" 
+            headers["X-TITLE"] = "My Study App"
+
+        response = requests.get(url, headers=headers, timeout=5)
+        
+        if response.status_code == 200:
+            data = response.json()
+            # OpenRouter 返回的数据在 'data' 字段里
+            model_list = data.get('data', [])
+            # 提取模型 ID 并排序
+            ids = [m['id'] for m in model_list]
+            return sorted(ids)
+        else:
+            return []
+    except Exception:
+        return []
+
 def call_ai_universal(prompt, history=[]):
     """
-    通用 AI 接口
-    根据 session_state 中选择的模型进行分流
+    通用 AI 调用接口 (支持 Gemini / DeepSeek / OpenRouter)
+    自动读取 st.session_state 中的模型配置
     """
-    # 获取当前用户选择的模型，默认为 gemini
-    provider = st.session_state.get('selected_model', 'Gemini (免费/稳定)')
+    # 1. 获取用户选择的厂商 (默认为 Gemini)
+    provider = st.session_state.get('selected_provider', 'Gemini')
+    
+    # 2. 获取具体模型 ID (如果是 OpenRouter 或 DeepSeek)
+    # 默认为 Gemini 2.0 Flash (OpenRouter上的免费神模)
+    target_model = st.session_state.get('openrouter_model_id', 'google/gemini-2.0-flash-exp:free')
     
     try:
-        # === 分支 A: Google Gemini ===
+        # === 分支 A: Google Gemini 官方直连 ===
         if "Gemini" in provider:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}"
+            # 使用 secrets 中的 Google Key
+            api_key = st.secrets["GOOGLE_API_KEY"]
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
             headers = {'Content-Type': 'application/json'}
             
-            # 构造 Gemini 历史格式
+            # 转换历史格式为 Gemini 格式
             contents = []
             for h in history:
                 role = "user" if h['role'] == 'user' else "model"
@@ -94,37 +137,58 @@ def call_ai_universal(prompt, history=[]):
             contents.append({"role": "user", "parts": [{"text": prompt}]})
             
             data = {"contents": contents}
-            response = requests.post(url, headers=headers, json=data)
+            
+            # 发送请求
+            response = requests.post(url, headers=headers, json=data, timeout=30)
+            
             if response.status_code == 200:
                 return response.json()['candidates'][0]['content']['parts'][0]['text']
-            return None
+            else:
+                return f"Gemini 报错 ({response.status_code}): {response.text}"
 
-        # === 分支 B: DeepSeek / OpenRouter (OpenAI 兼容格式) ===
+        # === 分支 B: OpenAI 兼容接口 (DeepSeek / OpenRouter) ===
         else:
             client = None
-            model_name = ""
             
+            # 配置客户端
             if "DeepSeek" in provider:
-                if "deepseek" not in st.secrets: return "请先在 secrets.toml 配置 DeepSeek"
-                client = OpenAI(api_key=st.secrets["deepseek"]["api_key"], base_url=st.secrets["deepseek"]["base_url"])
-                model_name = "deepseek-chat"
+                if "deepseek" not in st.secrets: return "请在 secrets.toml 配置 [deepseek]"
+                client = OpenAI(
+                    api_key=st.secrets["deepseek"]["api_key"], 
+                    base_url=st.secrets["deepseek"]["base_url"]
+                )
+                # DeepSeek 官方 API 通常只支持 deepseek-chat 或 deepseek-reasoner
+                # 如果 target_model 是 OpenRouter 的格式，这里强制修正为 deepseek-chat
+                if "/" in target_model: target_model = "deepseek-chat"
+                
             elif "OpenRouter" in provider:
-                if "openrouter" not in st.secrets: return "请先在 secrets.toml 配置 OpenRouter"
-                client = OpenAI(api_key=st.secrets["openrouter"]["api_key"], base_url=st.secrets["openrouter"]["base_url"])
-                model_name = "mistralai/mistral-7b-instruct" # 或其他你喜欢的模型
+                if "openrouter" not in st.secrets: return "请在 secrets.toml 配置 [openrouter]"
+                client = OpenAI(
+                    api_key=st.secrets["openrouter"]["api_key"], 
+                    base_url=st.secrets["openrouter"]["base_url"]
+                )
+                # OpenRouter 必须使用完整的 model id (如 google/gemini...)
 
-            # 构造 OpenAI 历史格式
-            messages = [{"role": "system", "content": "你是一位资深会计讲师，回答请专业、通俗。"}]
+            if not client: return "AI 客户端初始化失败"
+
+            # 转换历史格式为 OpenAI 格式
+            messages = [{"role": "system", "content": "你是一位资深会计讲师，擅长用通俗的生活案例解释复杂的财务概念。"}]
             for h in history:
-                messages.append({"role": h['role'], "content": h['content']})
+                # 兼容 Gemini 的 'model' 角色名转为 'assistant'
+                role = "assistant" if h['role'] == "model" else h['role']
+                messages.append({"role": role, "content": h['content']})
             messages.append({"role": "user", "content": prompt})
 
-            response = client.chat.completions.create(model=model_name, messages=messages)
+            # 发送请求
+            response = client.chat.completions.create(
+                model=target_model,
+                messages=messages,
+                temperature=0.7
+            )
             return response.choices[0].message.content
 
     except Exception as e:
-        st.error(f"AI 调用出错: {e}")
-        return None
+        return f"AI 调用发生异常: {str(e)}"
 
 
 # --- 文档处理函数 ---
@@ -183,17 +247,89 @@ profile = get_user_profile(user_id)
 
 with st.sidebar:
     st.title("🥝 备考中心")
-    st.session_state.selected_model = st.selectbox(
+    
+    # --- 1. AI 大脑设置 (动态联网版) ---
+    ai_provider = st.selectbox(
         "🧠 AI 大脑", 
-        ["Gemini (免费/稳定)", "DeepSeek (逻辑强)", "OpenRouter (更多模型)"]
+        ["Gemini (官方直连)", "DeepSeek (官方直连)", "OpenRouter (聚合平台)"]
     )
-    menu = st.radio("导航", ["🏠 仪表盘", "📚 资料库 (双轨录入)", "📝 章节特训 (刷题)", "⚔️ 全真模考", "📊 弱项分析", "❌ 错题本", "⚙️ 设置中心"], label_visibility="collapsed")
+    
+    target_model_id = None # 初始化
+    
+    # === 分支 A: OpenRouter 动态列表 ===
+    if "OpenRouter" in ai_provider:
+        # 1. 尝试从 Secrets 获取配置
+        or_key = st.secrets.get("openrouter", {}).get("api_key")
+        or_url = st.secrets.get("openrouter", {}).get("base_url", "https://openrouter.ai/api/v1")
+        
+        # 2. 联网获取列表
+        with st.spinner("正在同步 OpenRouter 模型库..."):
+            dynamic_models = fetch_available_models("openrouter", or_key, or_url)
+        
+        # 3. 设定备选方案 (如果联网失败或Key没填，用这几个保底)
+        backup_models = [
+            "google/gemini-2.0-flash-exp:free",
+            "deepseek/deepseek-r1",
+            "meta-llama/llama-3.3-70b-instruct",
+            "microsoft/phi-3-medium-128k-instruct:free"
+        ]
+        
+        # 4. 决定显示哪些选项
+        # 如果抓取到了，就把抓取到的放在前面；否则只显示备份的
+        final_options = dynamic_models if dynamic_models else backup_models
+        
+        target_model_id = st.selectbox(
+            "🔌 选择 OpenRouter 模型",
+            final_options,
+            index=0,
+            help="列表实时从 OpenRouter 获取。如果没有显示完整列表，请检查 Secrets 配置。"
+        )
+        
+        if not dynamic_models:
+            st.caption("⚠️ 离线模式：未能连接 OpenRouter，仅显示推荐列表。")
+        else:
+            st.caption(f"✅ 已同步 {len(dynamic_models)} 个在线模型")
+
+    # === 分支 B: DeepSeek 动态列表 ===
+    elif "DeepSeek" in ai_provider:
+        ds_key = st.secrets.get("deepseek", {}).get("api_key")
+        ds_url = st.secrets.get("deepseek", {}).get("base_url", "https://api.deepseek.com")
+        
+        # DeepSeek 目前主要就是 deepseek-chat (V3) 和 deepseek-reasoner (R1)
+        # 但我们也尝试动态获取，万一以后出了 V4 呢
+        ds_models = fetch_available_models("deepseek", ds_key, ds_url)
+        
+        ds_backups = ["deepseek-chat", "deepseek-reasoner"]
+        
+        final_ds_opts = ds_models if ds_models else ds_backups
+        
+        target_model_id = st.selectbox("🔌 选择 DeepSeek 版本", final_ds_opts)
+
+    # 存入全局状态
+    st.session_state.selected_provider = ai_provider
+    st.session_state.openrouter_model_id = target_model_id
+
     st.divider()
+
+    # --- 2. 导航菜单 (保持不变) ---
+    menu = st.radio(
+        "导航", 
+        ["🏠 仪表盘", "📚 资料库 (双轨录入)", "📝 章节特训 (刷题)", "⚔️ 全真模考", "📊 弱项分析", "❌ 错题本", "⚙️ 设置中心"], 
+        label_visibility="collapsed"
+    )
+    
+    st.divider()
+    
+    # --- 3. 倒计时 (保持不变) ---
     if profile.get('exam_date'):
         try:
             days = (datetime.datetime.strptime(profile['exam_date'], '%Y-%m-%d').date() - datetime.date.today()).days
-            st.metric("⏳ 距离考试", f"{days} 天")
-        except: pass
+            if days <= 30:
+                st.metric("⏳ 距离考试", f"{days} 天", delta="冲刺阶段", delta_color="inverse")
+            else:
+                st.metric("⏳ 距离考试", f"{days} 天")
+        except: 
+            pass
 
 # === 🏠 仪表盘 ===
 if menu == "🏠 仪表盘":
@@ -517,22 +653,31 @@ elif menu == "📊 弱项分析":
     else: st.info("暂无数据")
 
 elif menu == "❌ 错题本":
-    st.title("❌ 错题集 & 智能攻克")
+    st.title("❌ 错题集 & 智能私教")
     
-    # 获取错题
-    errs = supabase.table("user_answers").select("*, question_bank(*)").eq("user_id", user_id).eq("is_correct", False).execute().data
+    # 获取错题 (包含题目详情)
+    # 注意：这里我们同时获取 question_bank 和 user_answers 里的 chat_history
+    errs = supabase.table("user_answers").select("*, question_bank(*)").eq("user_id", user_id).eq("is_correct", False).order("created_at", desc=True).execute().data
     
     if not errs:
-        st.success("🎉 目前没有错题，继续保持！")
+        st.markdown("""
+        <div style="text-align:center; padding:40px; color:#888;">
+            <h3>🎉 太棒了！目前没有错题</h3>
+            <p>去刷几道新题挑战一下吧！</p>
+        </div>
+        """, unsafe_allow_html=True)
     else:
-        st.info(f"当前共有 {len(errs)} 道错题待攻克")
+        st.info(f"当前共有 {len(errs)} 道错题待复习")
         
         for i, e in enumerate(errs):
             q = e['question_bank']
             if not q: continue
             
+            # 获取数据库里已存的聊天记录 (如果没有则为 [])
+            db_chat_history = e.get('ai_chat_history') or []
+            
+            # 卡片式展示
             with st.expander(f"🔴 {q['content'][:30]}... (点击展开)"):
-                # 1. 题目基础信息
                 st.markdown(f"**题目：** {q['content']}")
                 if q['options']:
                     st.markdown(f"**选项：** {q['options']}")
@@ -541,70 +686,75 @@ elif menu == "❌ 错题本":
                 c1.error(f"你的错选：{e['user_response']}")
                 c2.success(f"正确答案：{q['correct_answer']}")
                 
-                st.info(f"💡 **解析：** {q['explanation']}")
+                st.info(f"💡 **标准解析：** {q['explanation']}")
                 
-                # --- 功能区 ---
-                col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 2])
+                st.divider()
                 
-                # 功能 A: 移除
-                if col_btn1.button("✅ 已掌握，移除", key=f"del_{e['id']}"):
+                # --- 🤖 AI 私教互动区 (带记忆功能) ---
+                st.markdown("#### 🤖 AI 私教答疑")
+                
+                # 区域容器：用于显示历史记录
+                chat_container = st.container()
+                
+                # 1. 渲染历史对话 (如果有)
+                with chat_container:
+                    if db_chat_history:
+                        for msg in db_chat_history:
+                            role_class = "chat-ai" if msg['role'] == "model" else "chat-user"
+                            prefix = "🤖 AI：" if msg['role'] == "model" else "👤 你："
+                            st.markdown(f"<div class='{role_class}'><b>{prefix}</b><br>{msg['content']}</div>", unsafe_allow_html=True)
+                    else:
+                        st.caption("暂无提问记录。点击下方按钮让 AI 举个栗子 👇")
+
+                # 2. 交互按钮区
+                col_ask, col_clear, col_del = st.columns([1, 1, 2])
+                
+                # 【按钮 A】: 第一次请求举例 (仅当没有历史记录时显示，或者用户想重新生成)
+                if not db_chat_history:
+                    if col_ask.button("🤔 我不理解，举个生活例子", key=f"init_ask_{e['id']}"):
+                        prompt = f"用户做错了这道会计题：'{q['content']}'。答案是{q['correct_answer']}。解析是：{q['explanation']}。请用通俗的生活案例（如买菜、开店）来类比解释这个知识点。"
+                        
+                        with st.spinner("AI 正在头脑风暴..."):
+                            res = call_ai_universal(prompt)
+                            if res:
+                                # 更新本地和数据库
+                                new_history = [{"role": "model", "content": res}]
+                                supabase.table("user_answers").update({"ai_chat_history": new_history}).eq("id", e['id']).execute()
+                                st.rerun() # 刷新页面显示新内容
+
+                # 【按钮 B】: 清空对话记录 (节省空间/重新提问)
+                else:
+                    if col_clear.button("🗑️ 清除对话记忆", key=f"clr_{e['id']}"):
+                        supabase.table("user_answers").update({"ai_chat_history": []}).eq("id", e['id']).execute()
+                        st.toast("记忆已清除")
+                        st.rerun()
+
+                # 【按钮 C】: 彻底移除错题 (已掌握)
+                if col_del.button("✅ 我学会了，移出错题本", key=f"rm_{e['id']}"):
                     supabase.table("user_answers").update({"is_correct": True}).eq("id", e['id']).execute()
-                    st.toast("已移出错题本")
+                    st.toast("恭喜！消灭一道错题！")
                     time.sleep(0.5)
                     st.rerun()
 
-                # 功能 B: AI 生活化解释 (带追问)
-                chat_key = f"err_chat_{e['id']}"
-                if chat_key not in st.session_state: st.session_state[chat_key] = []
-                
-                if col_btn2.button("🤔 我不理解 (AI讲解)", key=f"ask_{e['id']}"):
-                    prompt = f"用户做错了这道会计题：'{q['content']}'。答案是{q['correct_answer']}。请用通俗的生活案例（如买菜、做生意）解释这个知识点。"
-                    with st.spinner("AI 正在思考生活案例..."):
-                        res = call_ai_universal(prompt) # 使用新函数
-                        if res:
-                            st.session_state[chat_key].append({"role": "model", "content": res})
-
-                # 功能 C: AI 生成变式题特训
-                if col_btn3.button("⚡ 生成 3 道同类题特训", key=f"gen_{e['id']}"):
-                    gen_prompt = f"""
-                    用户在考点【{q['content'][:20]}...】上出错了。
-                    请基于此考点，结合最新会计准则，编写 3 道类似的变式单选题进行巩固。
-                    要求：难度相当，但不要原题。
-                    返回纯 JSON 列表：[{{'content':'..','options':['A..'],'correct_answer':'A','explanation':'..'}}]
-                    """
-                    with st.spinner("正在生成专项特训题..."):
-                        res = call_ai_universal(gen_prompt)
-                        try:
-                            # 清洗 JSON
-                            clean_json = res.replace("```json", "").replace("```", "").strip()
-                            new_qs = json.loads(clean_json)
+                # 3. 追问输入框 (仅当有历史记录或已开始对话时显示)
+                if db_chat_history:
+                    with st.form(key=f"chat_form_{e['id']}"):
+                        user_input = st.text_input("继续追问 (例如：那如果是卖方呢？)", placeholder="在此输入你的疑问...")
+                        submit_chat = st.form_submit_button("发送追问 ⬆️")
+                        
+                        if submit_chat and user_input:
+                            # 1. 把用户问题加入历史
+                            temp_history = db_chat_history + [{"role": "user", "content": user_input}]
                             
-                            # 直接跳转到做题界面
-                            st.session_state.quiz_data = new_qs
-                            st.session_state.q_idx = 0
-                            st.session_state.quiz_active = True
-                            st.session_state.quiz_cid = q['chapter_id'] # 借用原章节ID
-                            
-                            # 强制跳转到章节特训页面 (通过 URL query 或 简单的 session 状态提示用户)
-                            # 这里简单点：直接在当前页显示“特训开始”弹窗，或者把 menu 变量强制改一下(Streamlit不支持直接改menu变量)
-                            # 最好的办法是：存入 session，提示用户去刷题页
-                            st.success(f"已生成 3 道特训题！请点击左侧【📝 章节特训】开始练习（数据已加载）。")
-                        except:
-                            st.error("生成失败，请重试")
+                            with st.spinner("AI 正在思考..."):
+                                # 2. 调用 AI (带上下文)
+                                ai_reply = call_ai_universal(user_input, history=db_chat_history)
+                                
+                                if ai_reply:
+                                    # 3. 把 AI 回复也加入历史
+                                    final_history = temp_history + [{"role": "model", "content": ai_reply}]
+                                    
+                                    # 4. 存入数据库
+                                    supabase.table("user_answers").update({"ai_chat_history": final_history}).eq("id", e['id']).execute()
+                                    st.rerun()
 
-                # 显示 AI 解释对话框
-                if st.session_state[chat_key]:
-                    st.markdown("---")
-                    st.markdown("##### 🤖 AI 辅导员")
-                    for msg in st.session_state[chat_key]:
-                        style = "chat-ai" if msg['role'] == "model" else "chat-user"
-                        st.markdown(f"<div class='{style}'>{msg['content']}</div>", unsafe_allow_html=True)
-                    
-                    # 追问输入
-                    ask_text = st.text_input("继续追问...", key=f"in_{e['id']}")
-                    if st.button("发送", key=f"send_{e['id']}") and ask_text:
-                        st.session_state[chat_key].append({"role": "user", "content": ask_text})
-                        with st.spinner("回复中..."):
-                            res = call_ai_universal(ask_text, history=st.session_state[chat_key][:-1])
-                            st.session_state[chat_key].append({"role": "model", "content": res})
-                            st.rerun()
