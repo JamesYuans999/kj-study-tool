@@ -76,6 +76,31 @@ def init_supabase():
 supabase = init_supabase()
 
 @st.cache_data(ttl=3600)
+def fetch_google_models(api_key):
+    """
+    专门获取 Google Gemini 可用模型列表
+    """
+    if not api_key: return []
+    
+    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+    
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            # 过滤出支持生成内容(generateContent)的模型，排除 embedding 模型
+            models = []
+            for m in data.get('models', []):
+                if "generateContent" in m.get('supportedGenerationMethods', []):
+                    # Google 返回格式通常是 "models/gemini-1.5-flash"，我们去掉前缀方便展示
+                    name = m['name'].replace("models/", "")
+                    models.append(name)
+            return sorted(models, reverse=True) # 让新模型排前面
+        return []
+    except:
+        return []
+
+@st.cache_data(ttl=3600)
 def fetch_openrouter_models(api_key):
     """
     获取 OpenRouter 模型列表，并标记是否免费
@@ -299,6 +324,29 @@ with st.sidebar:
     st.session_state.selected_provider = ai_provider
     
     target_model_id = None
+
+     # === 分支 A: Google Gemini ===
+    if "Gemini" in ai_provider:
+        g_key = st.secrets["GOOGLE_API_KEY"]
+        
+        # 1. 联网获取
+        with st.spinner("同步 Google 模型库..."):
+            g_models = fetch_google_models(g_key)
+        
+        # 2. 保底列表 (万一联网失败)
+        g_backups = ["gemini-2.0-flash-exp", "gemini-1.5-flash", "gemini-1.5-pro"]
+        
+        final_g_opts = g_models if g_models else g_backups
+        
+        # 3. 选择框
+        target_model_id = st.selectbox(
+            "🔌 选择 Gemini 版本", 
+            final_g_opts,
+            index=0,
+            key="google_model_select",
+            on_change=save_model_preference
+        )
+        st.session_state.google_model_id = target_model_id
     
     # === OpenRouter 专属逻辑 ===
     if "OpenRouter" in ai_provider:
@@ -901,6 +949,7 @@ elif menu == "❌ 错题本":
                                         final_history = temp_history + [{"role": "model", "content": ai_reply}]
                                         supabase.table("user_answers").update({"ai_chat_history": final_history}).eq("id", rec_id).execute()
                                         st.rerun()
+
 
 
 
