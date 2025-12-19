@@ -5,3 +5,4 @@ pdfplumber
 plotly
 pandas
 python-docx
+openai
