@@ -600,6 +600,7 @@ elif menu == "📂 智能拆书 & 资料":
                     st.rerun()
 
             # [Tab 2] 真题提取
+# [Tab 2] 录入真题 (修复版：带强力清洗与调试)
             with t2:
                 st.caption("从文档中提取题目。支持 **上传新文件** 或 **使用已拆分的章节文字**。")
                 
@@ -608,6 +609,7 @@ elif menu == "📂 智能拆书 & 资料":
                 
                 raw_text = ""
                 
+                # 来源 A: 数据库
                 if "已存文字" in source_type:
                     mats = supabase.table("materials").select("content").eq("chapter_id", cid).execute().data
                     if not mats:
@@ -616,11 +618,12 @@ elif menu == "📂 智能拆书 & 资料":
                         raw_text = "\n".join([m['content'] for m in mats])
                         st.success(f"✅ 已加载当前章节文字，共 {len(raw_text)} 字。")
                 
+                # 来源 B: 新上传
                 else:
-                    up_b = st.file_uploader("上传真题文件", key='up_b')
+                    up_b = st.file_uploader("上传真题文件 (PDF/Word)", key='up_b')
                     if up_b:
-                        # (这里依然保留 PDF 页码控制器的逻辑)
                         if up_b.name.endswith('.pdf'):
+                            # 简易页码控制
                             c_p1, c_p2 = st.columns(2)
                             q_start = c_p1.number_input("开始页", 1, value=1)
                             q_end = c_p2.number_input("结束页", 1, value=10)
@@ -628,36 +631,91 @@ elif menu == "📂 智能拆书 & 资料":
                         else:
                             raw_text = extract_text_from_docx(up_b)
 
-                # 提取逻辑
+                # --- 提取逻辑 (核心修复区) ---
                 if raw_text:
-                    custom_hint = st.text_input("提示词", placeholder="例：只提取选择题...")
-                    if st.button("🔍 开始 AI 提取", type="primary"):
-                        with st.spinner("AI 正在分析..."):
-                            prompt = f"""
-                            提取题目。提示：{custom_hint}。
-                            格式JSON：[{{ "question": "...", "options": ["A.","B."], "answer": "A", "explanation": "..." }}]
-                            文本：{raw_text[:20000]}
-                            """
-                            res = call_ai_universal(prompt)
-                            if res:
-                                try:
-                                    cln = res.replace("```json","").replace("```","").strip()
-                                    idx1, idx2 = cln.find('['), cln.rfind(']')+1
-                                    if idx1!=-1 and idx2!=-1: cln = cln[idx1:idx2]
-                                    st.session_state.extracted_data = json.loads(cln)
-                                    st.success(f"识别到 {len(st.session_state.extracted_data)} 题")
-                                except: st.error("解析失败")
+                    st.divider()
+                    col_hint, col_act = st.columns([3, 1])
+                    with col_hint:
+                        custom_hint = st.text_input("提示词 (可选)", placeholder="例：只提取选择题，答案在每题括号内...")
+                    with col_act:
+                        st.write("") # 占位对齐
+                        st.write("")
+                        start_btn = st.button("🔍 开始 AI 提取", type="primary")
 
-                # 校对入库
+                    if start_btn:
+                        if len(raw_text) < 20:
+                            st.error("❌ 提取的文本太少（少于20字），无法处理！请检查 PDF 是否为纯图片扫描件。")
+                        else:
+                            with st.spinner("AI 正在分析文本结构..."):
+                                prompt = f"""
+                                任务：从以下文本中提取会计题目。
+                                用户提示：{custom_hint}
+                                
+                                【严格要求】
+                                1. 仅提取题目、选项、答案、解析。
+                                2. 必须返回纯 JSON 列表格式。
+                                3. 不要包含 ```json 或 ``` 标记，不要有任何开场白或结束语，只返回 JSON 数据。
+                                
+                                格式示例：
+                                [
+                                  {{
+                                    "question": "题目内容...",
+                                    "options": ["A.选项1", "B.选项2"],
+                                    "answer": "A",
+                                    "explanation": "解析..."
+                                  }}
+                                ]
+                                
+                                待处理文本：
+                                {raw_text[:15000]}
+                                """
+                                
+                                res = call_ai_universal(prompt)
+                                
+                                if not res:
+                                    st.error("AI 未返回任何内容 (可能是网络超时或 Key 额度耗尽)")
+                                else:
+                                    try:
+                                        # --- 🔥 强力清洗逻辑 (Regex 替代) ---
+                                        import re
+                                        # 尝试找到第一个 [ 和最后一个 ]
+                                        match = re.search(r'\[.*\]', res, re.DOTALL)
+                                        
+                                        if match:
+                                            json_str = match.group(0)
+                                            st.session_state.extracted_data = json.loads(json_str)
+                                            st.success(f"✅ 成功识别到 {len(st.session_state.extracted_data)} 道题！")
+                                        else:
+                                            raise ValueError("未找到 JSON 数组结构")
+                                            
+                                    except Exception as e:
+                                        st.error(f"❌ 解析失败: {e}")
+                                        st.warning("AI 返回了非标准格式的数据。请查看下方调试信息。")
+                                        with st.expander("🔍 [调试] 点击查看 AI 到底回了什么"):
+                                            st.text(res) # 展示原始内容，让你知道发生了什么
+
+                # 校对与入库
                 if 'extracted_data' in st.session_state:
-                    edited = st.data_editor(st.session_state.extracted_data, num_rows="dynamic")
-                    if st.button("💾 存入题库"):
-                        fmt = [{"question":q['question'], "options":q['options'], "answer":q['answer'], "explanation":q.get('explanation','')} for q in edited]
-                        save_questions_v3(fmt, cid, user_id, origin="extraction")
-                        st.success("成功！")
-                        del st.session_state.extracted_data
-                        time.sleep(1)
-                        st.rerun()
+                    st.info("请在下方表格中校对数据，确认无误后点击保存。")
+                    edited = st.data_editor(st.session_state.extracted_data, num_rows="dynamic", use_container_width=True)
+                    
+                    if st.button("💾 确认存入题库", type="primary"):
+                        try:
+                            fmt = [{
+                                "question": q.get('question', '缺失'), 
+                                "options": q.get('options', []), 
+                                "answer": q.get('answer', ''), 
+                                "explanation": q.get('explanation', '')
+                            } for q in edited]
+                            
+                            save_questions_v3(fmt, cid, user_id, origin="extraction")
+                            st.balloons()
+                            st.success(f"成功存入 {len(fmt)} 道题！")
+                            del st.session_state.extracted_data
+                            time.sleep(1)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"写入数据库失败: {e}")
 
             # [Tab 3] 导学
             with t3:
@@ -1191,6 +1249,7 @@ elif menu == "⚙️ 设置中心":
             st.success("已清空所有学习记录，一切重新开始！")
             time.sleep(1)
             st.rerun()
+
 
 
 
