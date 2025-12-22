@@ -521,16 +521,44 @@ elif menu == "📂 智能拆书 & 资料":
     # 场景 B: 已有书籍管理 (打通 拆书成果 -> 题目提取)
     # =====================================================
     elif books:
-        bid = next(b['id'] for b in books if b['title'] == sel_book)
-        chapters = get_chapters(bid)
+        # --- 1. 书籍管理顶栏 (找回的功能) ---
+        c_sel_b, c_manage_b = st.columns([3, 1])
         
-        # 顶部信息栏
+        with c_sel_b:
+            # 确认当前书籍 ID
+            # 注意：这里的 sel_book 来自上级选择器，确保它存在于 books 列表中
+            try:
+                bid = next(b['id'] for b in books if b['title'] == sel_book)
+            except:
+                st.error("书籍选择错误，请刷新页面")
+                st.stop()
+                
+            chapters = get_chapters(bid)
+        
+        with c_manage_b:
+            # ⚙️ 管理入口
+            with st.popover("⚙️ 管理此书", use_container_width=True):
+                st.markdown(f"**当前选中：**\n{sel_book}")
+                st.warning("⚠️ 危险操作")
+                
+                if st.button("🗑️ 删除整本书 (含章节/题目)", type="primary", key="del_whole_book"):
+                    try:
+                        # 级联删除：书没了，下面挂载的所有东西都会自动消失
+                        supabase.table("books").delete().eq("id", bid).execute()
+                        st.toast("书籍已彻底删除！")
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"删除失败: {e}")
+
+        # --- 2. 顶部信息栏 ---
         if "[习题]" in sel_book:
             st.info(f"当前选中习题集：**{sel_book}**。请在下方 **Tab 2 (轨道B)** 中提取题目。")
         
         if not chapters:
-            st.warning("本书暂无章节数据")
+            st.warning("本书暂无章节数据，可能是拆分未保存。建议删除后重新上传。")
         else:
+            # 章节选择器
             c3, c4 = st.columns([2, 1])
             with c3:
                 sel_chap = st.selectbox("3. 选择章节", [c['title'] for c in chapters])
@@ -538,7 +566,7 @@ elif menu == "📂 智能拆书 & 资料":
             with c4:
                 st.write("")
                 st.write("")
-                # 统计
+                # 统计数据
                 try:
                     m_cnt = supabase.table("materials").select("id", count="exact").eq("chapter_id", cid).execute().count
                     q_cnt = supabase.table("question_bank").select("id", count="exact").eq("chapter_id", cid).execute().count
@@ -547,7 +575,7 @@ elif menu == "📂 智能拆书 & 资料":
 
             st.markdown("---")
             
-            # --- 核心双轨 Tabs ---
+            # --- 3. 核心双轨 Tabs (保持优化后的逻辑) ---
             t1, t2, t3 = st.tabs(["📖 轨道A: 教材/生成", "📑 轨道B: 真题/提取", "🎓 AI 导学"])
             
             # [Tab 1] 教材管理
@@ -559,7 +587,7 @@ elif menu == "📂 智能拆书 & 资料":
                     with st.expander(f"已存内容 ({len(mats)} 段) - 点击展开"):
                         for m in mats:
                             st.text(m['content'][:100]+"...")
-                            if st.button("删除", key=f"d_m_{m['id']}"):
+                            if st.button("删除此段", key=f"d_m_{m['id']}"):
                                 supabase.table("materials").delete().eq("id", m['id']).execute()
                                 st.rerun()
                 
@@ -571,7 +599,7 @@ elif menu == "📂 智能拆书 & 资料":
                     st.success("已存入")
                     st.rerun()
 
-            # [Tab 2] 真题提取 (🔥 核心打通点)
+            # [Tab 2] 真题提取
             with t2:
                 st.caption("从文档中提取题目。支持 **上传新文件** 或 **使用已拆分的章节文字**。")
                 
@@ -591,10 +619,16 @@ elif menu == "📂 智能拆书 & 资料":
                 else:
                     up_b = st.file_uploader("上传真题文件", key='up_b')
                     if up_b:
-                        # (此处保留之前的 PDF 页码控制器逻辑，简写以省篇幅，实际请完整保留)
-                        raw_text = extract_pdf(up_b) if up_b.name.endswith('.pdf') else extract_text_from_docx(up_b)
+                        # (这里依然保留 PDF 页码控制器的逻辑)
+                        if up_b.name.endswith('.pdf'):
+                            c_p1, c_p2 = st.columns(2)
+                            q_start = c_p1.number_input("开始页", 1, value=1)
+                            q_end = c_p2.number_input("结束页", 1, value=10)
+                            raw_text = extract_pdf(up_b, q_start, q_end)
+                        else:
+                            raw_text = extract_text_from_docx(up_b)
 
-                # 提取逻辑 (通用)
+                # 提取逻辑
                 if raw_text:
                     custom_hint = st.text_input("提示词", placeholder="例：只提取选择题...")
                     if st.button("🔍 开始 AI 提取", type="primary"):
@@ -625,11 +659,23 @@ elif menu == "📂 智能拆书 & 资料":
                         time.sleep(1)
                         st.rerun()
 
-            # [Tab 3] 导学 (保持不变)
+            # [Tab 3] 导学
             with t3:
                 if st.button("🎓 生成讲义"):
-                    # ... (同前) ...
-                    pass
+                    mats = supabase.table("materials").select("content").eq("chapter_id", cid).execute().data
+                    if not mats:
+                        st.error("无资料")
+                    else:
+                        all_txt = "\n".join([m['content'] for m in mats])
+                        with st.spinner("生成中..."):
+                            p = f"生成讲义。内容：{all_txt[:20000]}"
+                            r = call_ai_universal(p)
+                            if r:
+                                m_name = st.session_state.get('selected_provider', 'AI')
+                                supabase.table("ai_lessons").insert({
+                                    "chapter_id": cid, "user_id": user_id, "title": f"{m_name} 讲义", "content": r, "ai_model": m_name
+                                }).execute()
+                                st.success("完成")
 # === 🎓 AI 课堂 (讲义) ===
 elif menu == "🎓 AI 课堂 (讲义)":
     st.title("🎓 智能讲义")
@@ -1145,6 +1191,7 @@ elif menu == "⚙️ 设置中心":
             st.success("已清空所有学习记录，一切重新开始！")
             time.sleep(1)
             st.rerun()
+
 
 
 
