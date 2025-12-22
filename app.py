@@ -418,85 +418,157 @@ elif menu == "📂 智能拆书 & 资料":
     
     st.divider()
 
-    # =====================================================
-    # 分支 A: 上传新书 (智能拆书)
+# =====================================================
+    # 分支 A: 上传新书 (智能拆书 - 修复版)
     # =====================================================
     if "上传新" in sel_book:
-        st.markdown("#### 📤 智能拆书台")
-        st.caption("AI 自动分析 PDF 目录，将整书拆分为章节，极大节省 Token。")
-        up_file = st.file_uploader("上传 PDF", type="pdf")
-        
-        if up_file:
-            try:
-                with pdfplumber.open(up_file) as pdf: total_pages = len(pdf.pages)
-                st.success(f"文件页数: {total_pages} 页")
-                
-                # Step 1: 扫描目录
-                if 'toc_analysis' not in st.session_state:
-                    if st.button("🚀 Step 1: 开始 AI 目录分析"):
-                        with st.spinner("正在读取前 20 页目录..."):
-                            toc_text = extract_pdf(up_file, 1, 20)
-                        
-                        with st.spinner("AI 正在规划章节结构..."):
-                            p = f"""
-                            分析以下目录，提取章节信息。
-                            内容：{toc_text[:10000]}
-                            要求：返回纯 JSON 列表，格式：
-                            [
-                                {{"title": "第一章 总论", "start_page": 5, "end_page": 18}},
-                                {{"title": "第二章 存货", "start_page": 19, "end_page": 45}}
-                            ]
-                            """
-                            # 拆书建议强制用 Gemini Flash (省钱且快)
-                            res = call_ai_universal(p, model_override="google/gemini-1.5-flash")
-                            if res:
-                                try:
-                                    clean = res.replace("```json","").replace("```","").strip()
-                                    st.session_state.toc_analysis = json.loads(clean)
-                                    st.rerun()
-                                except: st.error("AI 解析失败，请重试")
-                
-                # Step 2: 确认并入库
-                if 'toc_analysis' in st.session_state:
-                    st.write("##### 📝 Step 2: 确认拆分方案")
-                    edited_df = st.data_editor(
-                        st.session_state.toc_analysis, 
-                        num_rows="dynamic",
-                        column_config={
-                            "title": "章节名称",
-                            "start_page": st.column_config.NumberColumn("起始页", min_value=1),
-                            "end_page": st.column_config.NumberColumn("结束页", min_value=1)
-                        }
-                    )
+        with st.container():
+            st.markdown("#### 📤 智能拆书台")
+            st.caption("AI 自动分析 PDF 目录，将整书拆分为章节，极大节省 Token。")
+            
+            # 文件上传
+            up_file = st.file_uploader("上传教材/资料包 PDF", type="pdf")
+            
+            if up_file:
+                try:
+                    # 1. 检查 PDF 是否可读
+                    with pdfplumber.open(up_file) as pdf: 
+                        total_pages = len(pdf.pages)
+                    st.markdown(f"<div class='status-badge badge-success'>文件页数: {total_pages} 页</div>", unsafe_allow_html=True)
                     
-                    if st.button("✂️ Step 3: 开始拆分并存入"):
-                        progress_bar = st.progress(0)
-                        try:
-                            # 建书
-                            book_res = supabase.table("books").insert({
-                                "user_id": user_id, "subject_id": sid, "title": up_file.name.replace(".pdf",""), "total_pages": total_pages
-                            }).execute()
-                            bid = book_res.data[0]['id']
+                    # Session State 初始化
+                    if 'toc_analysis' not in st.session_state:
+                        
+                        if st.button("🚀 Step 1: 开始 AI 目录分析", type="primary"):
                             
-                            # 建章 & 存文本
-                            for i, chap in enumerate(edited_df):
+                            # --- 阶段 A: 读取文字 ---
+                            with st.spinner("正在读取前 20 页 (目录识别)..."):
                                 up_file.seek(0)
-                                txt = extract_pdf(up_file, chap['start_page'], chap['end_page'])
-                                if len(txt) > 10:
-                                    c_res = supabase.table("chapters").insert({
-                                        "book_id": bid, "title": chap['title'], "start_page": chap['start_page'], "end_page": chap['end_page'], "user_id": user_id
-                                    }).execute()
-                                    cid = c_res.data[0]['id']
-                                    save_material_v3(cid, txt, user_id)
-                                progress_bar.progress((i+1)/len(edited_df))
+                                toc_text = extract_pdf(up_file, 1, min(20, total_pages))
+                            
+                            if len(toc_text) < 50:
+                                st.error("⚠️ 无法提取文字！")
+                                st.warning("这似乎是一个扫描版（纯图片）PDF。目前的版本仅支持文字版 PDF。请先使用 OCR 软件将 PDF 转换为可搜索文档。")
+                            
+                            else:
+                                # --- 阶段 B: AI 分析 ---
+                                with st.spinner("AI 正在规划章节结构..."):
+                                    # 提示词增强
+                                    p = f"""
+                                    任务：分析以下教材目录文本，提取章节结构。
+                                    
+                                    总页数：{total_pages}。
+                                    
+                                    要求：
+                                    1. 识别主要章节（第一章、第二章... 或 Module 1...）。
+                                    2. 推测起始页码和结束页码。
+                                    3. 【必须】返回纯 JSON 列表，格式如下：
+                                    [
+                                        {{"title": "第一章 总论", "start_page": 5, "end_page": 18}},
+                                        {{"title": "第二章 存货", "start_page": 19, "end_page": 45}}
+                                    ]
+                                    
+                                    待分析文本：
+                                    {toc_text[:8000]}
+                                    """
+                                    
+                                    # 调用 AI (不强制 override，使用用户选择的模型，或者 fallback 到 Gemini)
+                                    # 如果用户选的是 DeepSeek V3，处理逻辑能力会更强
+                                    res = call_ai_universal(p)
+                                    
+                                    if res:
+                                        try:
+                                            # --- 🔥 强力清洗逻辑 (与真题提取保持一致) ---
+                                            clean = res.replace("```json","").replace("```","").strip()
+                                            s_idx = clean.find('[')
+                                            e_idx = clean.rfind(']') + 1
+                                            if s_idx != -1 and e_idx != -1: 
+                                                clean = clean[s_idx:e_idx]
+                                            
+                                            st.session_state.toc_analysis = json.loads(clean)
+                                            st.rerun()
+                                            
+                                        except Exception as e:
+                                            st.error("❌ AI 解析失败 (JSON 格式错误)")
+                                            st.error(f"报错信息: {e}")
+                                            # 显示原始返回，方便调试
+                                            with st.expander("🔍 点击查看 AI 的原始回复 (Debug)"):
+                                                st.text(res)
+                                    else:
+                                        st.error("AI 未返回任何内容 (网络超时或 Key 错误)")
+
+                    # --- 阶段 C: 确认与入库 ---
+                    if 'toc_analysis' in st.session_state:
+                        st.divider()
+                        st.markdown("##### 📝 Step 2: 确认拆分方案")
+                        st.caption("您可以直接在下方表格中修改章节名和页码。")
+                        
+                        edited_df = st.data_editor(
+                            st.session_state.toc_analysis, 
+                            num_rows="dynamic",
+                            column_config={
+                                "title": "章节名称",
+                                "start_page": st.column_config.NumberColumn("起始页", min_value=1, max_value=total_pages),
+                                "end_page": st.column_config.NumberColumn("结束页", min_value=1, max_value=total_pages)
+                            },
+                            use_container_width=True
+                        )
+                        
+                        col_submit, col_cancel = st.columns([1, 4])
+                        
+                        if col_submit.button("✂️ Step 3: 执行拆分并保存", type="primary"):
+                            progress_bar = st.progress(0)
+                            status_text = st.empty()
+                            
+                            try:
+                                # 1. 创建书籍记录
+                                book_res = supabase.table("books").insert({
+                                    "user_id": user_id, 
+                                    "subject_id": sid, 
+                                    "title": up_file.name.replace(".pdf",""), 
+                                    "total_pages": total_pages
+                                }).execute()
+                                bid = book_res.data[0]['id']
                                 
-                            st.success("拆分完成！请在上方选择这本书进行操作。")
+                                # 2. 循环切片入库
+                                total_tasks = len(edited_df)
+                                for i, chap in enumerate(edited_df):
+                                    status_text.text(f"正在处理: {chap['title']}...")
+                                    up_file.seek(0)
+                                    # 提取文本
+                                    txt = extract_pdf(up_file, chap['start_page'], chap['end_page'])
+                                    
+                                    if len(txt) > 10: # 忽略空章节
+                                        # 存章节
+                                        c_res = supabase.table("chapters").insert({
+                                            "book_id": bid, 
+                                            "title": chap['title'], 
+                                            "start_page": chap['start_page'], 
+                                            "end_page": chap['end_page'], 
+                                            "user_id": user_id
+                                        }).execute()
+                                        cid = c_res.data[0]['id']
+                                        
+                                        # 存内容
+                                        save_material_v3(cid, txt, user_id)
+                                    
+                                    progress_bar.progress((i + 1) / total_tasks)
+                                
+                                st.balloons()
+                                st.success(f"🎉 处理完成！已成功拆分为 {total_tasks} 个章节。")
+                                del st.session_state.toc_analysis # 清理状态
+                                time.sleep(2)
+                                st.rerun()
+                                
+                            except Exception as e:
+                                st.error(f"写入数据库出错: {e}")
+                        
+                        if col_cancel.button("取消"):
                             del st.session_state.toc_analysis
-                            time.sleep(1)
                             st.rerun()
-                        except Exception as e:
-                            st.error(f"出错: {e}")
-            except: st.error("文件无效")
+
+                except Exception as e:
+                    st.error(f"文件读取错误: {e}")
 
     # =====================================================
     # 分支 B: 已有书籍管理 (双轨录入核心区)
@@ -1165,4 +1237,5 @@ elif menu == "⚙️ 设置中心":
             st.success("已清空所有学习记录，一切重新开始！")
             time.sleep(1)
             st.rerun()
+
 
