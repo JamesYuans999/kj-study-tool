@@ -1018,137 +1018,303 @@ elif menu == "📝 章节特训": # 注意菜单名字要和你侧边栏定义�
                     st.session_state.q_idx += 1
                     st.rerun()
 # =========================================================
-# ⚔️ 全真模考 (V3 适配版：跨书本组卷)
+# ⚔️ 全真模考 (V3版：跨章节组卷 + 智能阅卷 + 历史归档)
 # =========================================================
 elif menu == "⚔️ 全真模考":
     st.title("⚔️ 全真模拟考试")
     
-    # 状态管理
-    if 'exam_session' not in st.session_state: st.session_state.exam_session = None
+    # 初始化考试状态
+    if 'exam_session' not in st.session_state:
+        st.session_state.exam_session = None
 
-    # --- A. 考前配置台 ---
+    # ---------------------------------------------------------
+    # 场景 A: 考试配置台 (未开始)
+    # ---------------------------------------------------------
     if not st.session_state.exam_session:
-        st.markdown("""
-        <div class="css-card" style="border-left: 5px solid #FF7043">
-            <h4>🐢 沉浸式考场</h4>
-            <p style="color:#666; font-size:14px">系统将从该科目下<b>所有书籍、所有章节</b>中随机抽取题目，组成一套全真试卷。</p>
-        </div>
-        """, unsafe_allow_html=True)
+        # 1. 历史成绩概览 (Bento Grid 风格)
+        st.markdown("##### 📜 最近模考记录")
+        try:
+            history = supabase.table("mock_exams").select("*").eq("user_id", user_id).order("created_at", desc=True).limit(4).execute().data
+            if history:
+                cols = st.columns(4)
+                for i, h in enumerate(history):
+                    with cols[i]:
+                        score_color = "#00C090" if h['user_score'] >= 60 else "#FF7043"
+                        st.markdown(f"""
+                        <div class="bs-card" style="padding:15px; border-left: 4px solid {score_color}">
+                            <div style="font-size:12px; color:#888">{h['created_at'][:10]}</div>
+                            <div style="font-weight:bold; font-size:14px; height:40px; overflow:hidden;">{h['title']}</div>
+                            <div style="font-size:24px; color:{score_color}; font-weight:800">{h['user_score']} <span style="font-size:12px">分</span></div>
+                        </div>
+                        """, unsafe_allow_html=True)
+            else:
+                st.info("暂无考试记录，快来开启你的第一次模考吧！")
+        except: pass
         
-        subjects = get_subjects()
-        if not subjects: st.stop()
+        st.divider()
         
+        # 2. 组卷配置
+        subjects = supabase.table("subjects").select("*").execute().data
+        if not subjects:
+            st.error("系统未初始化科目数据")
+            st.stop()
+            
         c1, c2 = st.columns([1, 1])
         with c1:
-            sel_sub_name = st.selectbox("选择科目", [s['name'] for s in subjects])
-            sid = next(s['id'] for s in subjects if s['name'] == sel_sub_name)
-        
+            sel_sub = st.selectbox("选择模考科目", [s['name'] for s in subjects])
+            sub_id = next(s['id'] for s in subjects if s['name'] == sel_sub)
         with c2:
-            mode = st.radio("试卷类型", ["🐇 快速自测 (5题)", "🐢 完整模考 (20题)"], horizontal=True)
-            limit = 5 if "快速" in mode else 20
-
-        if st.button("🚀 生成试卷", type="primary", use_container_width=True):
-            with st.spinner("正在跨章节组卷..."):
-                # 1. 找出该科目下所有的书
-                books = get_books(sid)
+            exam_mode = st.radio("试卷类型", ["🐇 精简自测 (5题 / 10分钟)", "🐢 全真模拟 (20题 / 120分钟)"], horizontal=True)
+        
+        # 3. 组卷逻辑 (V3 核心：科目 -> 书 -> 章 -> 题)
+        if st.button("🚀 生成试卷并开始", type="primary", use_container_width=True):
+            with st.spinner("正在全库扫描，智能组卷中..."):
+                # Step 1: 找该科目下所有的书
+                books = supabase.table("books").select("id").eq("subject_id", sub_id).execute().data
                 if not books:
-                    st.error("该科目下没有书籍资料，无法组卷。")
+                    st.error("该科目下没有书籍资料，无法组卷！")
+                    st.stop()
+                book_ids = [b['id'] for b in books]
+                
+                # Step 2: 找这些书下所有的章
+                chaps = supabase.table("chapters").select("id").in_("book_id", book_ids).execute().data
+                if not chaps:
+                    st.error("书籍中没有章节信息！")
+                    st.stop()
+                chap_ids = [c['id'] for c in chaps]
+                
+                # Step 3: 从题库中随机抽取题目
+                # 策略：先拉取一批 ID，然后随机抽，再 fetch 详情 (避免一次拉取太多 content 浪费流量)
+                # 这里为了简化，直接拉取 100 道题的详情并在内存随机
+                all_qs = supabase.table("question_bank").select("*").in_("chapter_id", chap_ids).limit(100).execute().data
+                
+                target_count = 5 if "精简" in exam_mode else 20
+                duration = 10 if "精简" in exam_mode else 120
+                
+                if len(all_qs) < target_count:
+                    st.warning(f"题库库存不足！该科目总共只有 {len(all_qs)} 道题，将全部用于考试。")
+                    final_paper = all_qs
                 else:
-                    book_ids = [b['id'] for b in books]
-                    
-                    # 2. 找出这些书下所有的章节
-                    # Supabase in_ 查询
-                    chaps = supabase.table("chapters").select("id").in_("book_id", book_ids).execute().data
-                    if not chaps:
-                        st.error("书籍内没有章节信息。")
-                    else:
-                        chap_ids = [c['id'] for c in chaps]
-                        
-                        # 3. 从这些章节里随机抽题
-                        # 简单随机：拉取最近 100 道，然后内存 shuffle
-                        raw_qs = supabase.table("question_bank").select("*").in_("chapter_id", chap_ids).limit(100).execute().data
-                        
-                        if len(raw_qs) < limit:
-                            st.warning(f"题库题目不足（当前仅 {len(raw_qs)} 题），无法生成完整试卷。")
-                        else:
-                            random.shuffle(raw_qs)
-                            paper = raw_qs[:limit]
-                            
-                            # 初始化考试会话
-                            st.session_state.exam_session = {
-                                "paper": paper,
-                                "answers": {},
-                                "start_time": time.time(),
-                                "duration": 120 * 60, # 默认2小时
-                                "submitted": False
-                            }
-                            st.rerun()
+                    import random
+                    random.shuffle(all_qs)
+                    final_paper = all_qs[:target_count]
+                
+                # 初始化考试 Session
+                st.session_state.exam_session = {
+                    "paper": final_paper,
+                    "answers": {}, # 存储用户答案 {index: val}
+                    "subject": sel_sub,
+                    "mode": exam_mode,
+                    "start_time_ms": int(time.time() * 1000), # 用于 JS 倒计时
+                    "duration_mins": duration,
+                    "submitted": False,
+                    "report": None
+                }
+                st.rerun()
 
-    # --- B. 考试进行中 ---
-    else:
+    # ---------------------------------------------------------
+    # 场景 B: 考试进行中 (沉浸式)
+    # ---------------------------------------------------------
+    elif not st.session_state.exam_session['submitted']:
         session = st.session_state.exam_session
         paper = session['paper']
         
-        # 顶部倒计时
-        elapsed = int(time.time() - session['start_time'])
-        remain = session['duration'] - elapsed
+        # --- 1. 顶部状态栏 & JS 倒计时 ---
+        import streamlit.components.v1 as components
         
-        if remain <= 0:
-            st.error("⏰ 考试结束！")
-            session['submitted'] = True
-        else:
-            rm, rs = divmod(remain, 60)
-            st.markdown(f"""
-            <div style="text-align:center; padding:10px; background:#fff3e0; border-radius:10px; color:#e65100; font-weight:bold; margin-bottom:20px;">
-                ⏳ 剩余时间：{rm:02d}:{rs:02d}
-            </div>
-            """, unsafe_allow_html=True)
-
-        # 题目渲染
-        if not session['submitted']:
-            with st.form("exam_form"):
-                for i, q in enumerate(paper):
-                    st.markdown(f"**{i+1}. {q['content']}**")
-                    # 记录答案
-                    key = f"ex_{i}"
-                    # 简单的单选逻辑
-                    session['answers'][i] = st.radio("选项", q['options'], key=key, label_visibility="collapsed")
-                    st.divider()
-                
-                if st.form_submit_button("交卷"):
-                    session['submitted'] = True
-                    st.rerun()
+        # 计算倒计时目标时间戳
+        end_time_ms = session['start_time_ms'] + (session['duration_mins'] * 60 * 1000)
         
-        # --- C. 考后报告 ---
-        else:
-            score = 0
-            total_score = len(paper) * 10
-            
-            st.balloons()
-            st.markdown(f"### 📊 考试报告")
-            
-            for i, q in enumerate(paper):
-                user_ans = session['answers'].get(i)
-                # 简单处理：取首字母比较
-                u_val = user_ans[0] if user_ans else ""
-                is_right = (u_val == q['correct_answer'])
-                if is_right: score += 10
+        timer_html = f"""
+        <div style="
+            position: fixed; top: 60px; right: 20px; z-index: 9999;
+            background: #dc3545; color: white; 
+            padding: 8px 20px; border-radius: 30px;
+            font-family: monospace; font-size: 18px; font-weight: bold;
+            box-shadow: 0 4px 15px rgba(220,53,69, 0.3);
+            display: flex; align-items: center; gap: 8px;
+        ">
+            <span>⏳ 剩余</span> <span id="exam_timer">--:--</span>
+        </div>
+        <script>
+            var endTime = {end_time_ms};
+            function updateExamTimer() {{
+                var now = Date.now();
+                var diff = Math.floor((endTime - now) / 1000);
                 
-                # 存入历史记录表 (mock_exams) - 略，或可在此处存入 user_answers
+                if (diff <= 0) {{
+                    document.getElementById("exam_timer").innerText = "00:00";
+                    // 实际开发可以触发自动交卷，这里简单处理
+                    return;
+                }}
                 
-                with st.expander(f"第 {i+1} 题: {'✅' if is_right else '❌'}", expanded=not is_right):
-                    st.write(q['content'])
-                    if not is_right:
-                        st.error(f"你的答案: {u_val}")
-                    st.success(f"正确答案: {q['correct_answer']}")
-                    st.info(q['explanation'])
-
-            st.metric("最终得分", f"{score} / {total_score}")
+                var h = Math.floor(diff / 3600);
+                var m = Math.floor((diff % 3600) / 60).toString().padStart(2, '0');
+                var s = (diff % 60).toString().padStart(2, '0');
+                
+                var text = m + ":" + s;
+                if (h > 0) text = h + ":" + text;
+                
+                document.getElementById("exam_timer").innerText = text;
+            }}
+            setInterval(updateExamTimer, 1000);
+            updateExamTimer();
+        </script>
+        """
+        components.html(timer_html, height=0)
+        
+        st.markdown(f"### 📝 {session['subject']} - {session['mode']}")
+        st.progress(len(session['answers']) / len(paper)) # 答题进度条
+        
+        # --- 2. 题目渲染 (单页显示所有题目，模拟试卷) ---
+        with st.form("exam_paper_form"):
+            for idx, q in enumerate(paper):
+                st.markdown(f"**第 {idx+1} 题：**")
+                st.markdown(f"<div style='font-size:16px; margin-bottom:10px'>{q['content']}</div>", unsafe_allow_html=True)
+                
+                # 智能识别单/多选
+                # 逻辑：清洗答案，看长度
+                std_ans = q['correct_answer'].replace(" ","").replace(",","").upper()
+                is_multi = len(std_ans) > 1
+                
+                opts = q.get('options') or []
+                
+                if is_multi:
+                    st.caption("（多选题）")
+                    # 多选处理
+                    selected = []
+                    col_opts = st.columns(2) # 双列显示选项更紧凑
+                    for i, opt in enumerate(opts):
+                        # 使用 form key
+                        if col_opts[i % 2].checkbox(opt, key=f"ex_mul_{idx}_{i}"):
+                            # 假设选项格式 "A. xxx"
+                            selected.append(opt[0].upper())
+                    
+                    # 存入临时答案 (排序后拼接 "AB")
+                    session['answers'][idx] = "".join(sorted(selected))
+                    
+                else:
+                    st.caption("（单选题）")
+                    # 单选处理
+                    val = st.radio("选择", opts, key=f"ex_sin_{idx}", index=None, label_visibility="collapsed")
+                    if val:
+                        session['answers'][idx] = val[0].upper()
+                
+                st.divider()
             
-            if st.button("退出考场"):
-                st.session_state.exam_session = None
+            # --- 3. 交卷按钮 ---
+            submitted = st.form_submit_button("🏁 交卷并查看成绩", type="primary", use_container_width=True)
+            
+            if submitted:
+                # 标记状态
+                session['submitted'] = True
                 st.rerun()
 
+    # ---------------------------------------------------------
+    # 场景 C: 考后报告 (评分 + AI 点评)
+    # ---------------------------------------------------------
+    else:
+        session = st.session_state.exam_session
+        paper = session['paper']
+        user_ans_map = session['answers']
+        
+        # 1. 自动判分逻辑
+        total_score = 0
+        score_per_q = 100 / len(paper) # 动态分值
+        
+        detail_report = []
+        
+        for idx, q in enumerate(paper):
+            u_ans = user_ans_map.get(idx, "")
+            std_ans = q['correct_answer'].replace(" ","").replace(",","").upper()
+            
+            is_correct = (u_ans == std_ans)
+            if is_correct: total_score += score_per_q
+            
+            # 记录详情
+            detail_report.append({
+                "q_content": q['content'],
+                "u_ans": u_ans if u_ans else "未作答",
+                "std_ans": std_ans,
+                "is_correct": is_correct,
+                "explanation": q['explanation']
+            })
+            
+            # 同步存入 user_answers 表 (用于弱项分析)
+            # 注意：不要阻塞主线程，尽力而为
+            try:
+                supabase.table("user_answers").insert({
+                    "user_id": user_id,
+                    "question_id": q['id'],
+                    "user_response": u_ans,
+                    "is_correct": is_correct,
+                    "time_taken": 0 # 模考暂不统计单题耗时
+                }).execute()
+            except: pass
+
+        final_score = int(total_score)
+        
+        # 2. AI 考后点评 (可选)
+        ai_comment = "正在生成点评..."
+        with st.spinner("🤖 AI 阅卷官正在分析你的试卷..."):
+            # 统计错题知识点 (如果有标签的话，这里简化为只把错题内容发给AI)
+            wrong_qs = [d['q_content'] for d in detail_report if not d['is_correct']]
+            if not wrong_qs:
+                ai_comment = "全对！简直是会计界的明日之星！保持这个状态，过关稳了。"
+            else:
+                prompt = f"""
+                学生刚刚完成了一套会计模考，得分 {final_score}/100。
+                以下是他做错的题目内容摘要：
+                {str(wrong_qs)[:2000]}
+                
+                请给出简短、犀利的考后点评，并指出他需要加强复习的方向。
+                语气：{st.session_state.get('teacher_style', '严厉负责的班主任')}。
+                """
+                ai_comment = call_ai_universal(prompt)
+
+        # 3. 存入 mock_exams 表
+        try:
+            supabase.table("mock_exams").insert({
+                "user_id": user_id,
+                "title": f"{session['subject']} 模考 ({datetime.date.today()})",
+                "mode": session['mode'],
+                "user_score": final_score,
+                "exam_data": json.dumps(detail_report) # 存快照
+            }).execute()
+        except: pass
+
+        # 4. 显示成绩单
+        st.balloons()
+        
+        c_score, c_comment = st.columns([1, 2])
+        with c_score:
+            st.markdown(f"""
+            <div class="bs-card" style="text-align:center; border-top: 5px solid #00C090;">
+                <div style="color:#888;">最终得分</div>
+                <div style="font-size:60px; color:#00C090; font-weight:800">{final_score}</div>
+                <div style="font-size:14px;">满分 100</div>
+            </div>
+            """, unsafe_allow_html=True)
+        with c_comment:
+            st.info(f"📋 **AI 阅卷点评：**\n\n{ai_comment}")
+
+        st.divider()
+        st.subheader("🔍 试卷解析")
+        
+        for i, item in enumerate(detail_report):
+            status = "✅ 正确" if item['is_correct'] else "❌ 错误"
+            color = "green" if item['is_correct'] else "red"
+            
+            with st.expander(f"第 {i+1} 题：{status}"):
+                st.markdown(f"**题目：** {item['q_content']}")
+                c1, c2 = st.columns(2)
+                c1.markdown(f"你的答案：<b style='color:{color}'>{item['u_ans']}</b>", unsafe_allow_html=True)
+                c2.markdown(f"正确答案：<b>{item['std_ans']}</b>", unsafe_allow_html=True)
+                st.markdown(f"**解析：** {item['explanation']}")
+
+        if st.button("🚪 退出考场"):
+            st.session_state.exam_session = None
+            st.rerun()
 # =========================================================
 # 📊 弱项分析 & ❌ 错题本
 # =========================================================
@@ -1332,6 +1498,7 @@ elif menu == "❌ 错题本":
                                         final_history = temp_history + [{"role": "model", "content": ai_reply}]
                                         supabase.table("user_answers").update({"ai_chat_history": final_history}).eq("id", rec_id).execute()
                                         st.rerun()
+
 
 
 
