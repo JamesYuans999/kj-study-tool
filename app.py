@@ -395,7 +395,6 @@ if menu == "🏠 仪表盘":
         </div>
         """, unsafe_allow_html=True)
 
-
 # =========================================================
 # 📂 智能拆书 & 资料 (V3.1 完美修复版：预览 + 答案对齐)
 # =========================================================
@@ -642,6 +641,7 @@ elif menu == "📂 智能拆书 & 资料":
                                 m_id = st.session_state.get('openrouter_model_id') or "AI"
                                 supabase.table("ai_lessons").insert({"chapter_id":cid, "user_id":user_id, "title":f"{m_id}版", "content":res, "ai_model":m_id}).execute()
                                 st.success("完成")
+
 
 # === 🎓 AI 课堂 (讲义) ===
 elif menu == "🎓 AI 课堂 (讲义)":
@@ -1158,6 +1158,7 @@ elif menu == "⚙️ 设置中心":
             st.success("已清空所有学习记录，一切重新开始！")
             time.sleep(1)
             st.rerun()
+
 
 
 
