@@ -396,7 +396,7 @@ if menu == "🏠 仪表盘":
         """, unsafe_allow_html=True)
 
 # =========================================================
-# 📂 智能拆书 & 资料 (V3 优化版：流程引导 + 自动跳转)
+# 📂 智能拆书 & 资料 (V3.1：分类处理 + 智能拆分 + 管理)
 # =========================================================
 elif menu == "📂 智能拆书 & 资料":
     st.title("📂 资料库管理")
@@ -405,9 +405,6 @@ elif menu == "📂 智能拆书 & 资料":
     if not subjects: st.error("请先在数据库初始化科目数据"); st.stop()
     
     # --- 1. 顶层选择器 ---
-    # 使用 session_state 记住当前选中的书，实现“拆完即跳”
-    if 'current_book_index' not in st.session_state: st.session_state.current_book_index = 0
-    
     c1, c2 = st.columns([1, 2])
     with c1:
         s_name = st.selectbox("1. 所属科目", [s['name'] for s in subjects])
@@ -415,207 +412,255 @@ elif menu == "📂 智能拆书 & 资料":
     
     with c2:
         books = get_books(sid)
-        # 构造选项列表
-        b_opts = ["➕ 上传新书 / 建立新题库 (PDF)..."] + [b['title'] for b in books]
-        
-        # 智能设定默认选中项
-        # 如果刚上传完新书，尝试自动选中它
-        idx = st.session_state.current_book_index
-        if idx >= len(b_opts): idx = 0
-        
-        sel_book = st.selectbox("2. 选择书籍/资料包", b_opts, index=idx)
-        
-        # 只有当选择了具体的书（不是上传选项）时，才显示删除按钮
-        if "➕" not in sel_book:
-            with st.popover("⚙️ 管理此书", use_container_width=True):
-                st.warning("⚠️ 危险操作")
-                bid_to_del = next(b['id'] for b in books if b['title'] == sel_book)
-                if st.button("🗑️ 删除整本书 (含所有章节题目)", type="primary"):
-                    try:
-                        supabase.table("books").delete().eq("id", bid_to_del).execute()
-                        st.toast("已删除！")
-                        st.session_state.current_book_index = 0 # 重置
-                        time.sleep(1)
-                        st.rerun()
-                    except Exception as e:
-                        st.error(str(e))
-
+        b_opts = ["➕ 上传新资料 (PDF)..."] + [b['title'] for b in books]
+        sel_book = st.selectbox("2. 选择书籍/资料包", b_opts)
+    
     st.divider()
 
     # =====================================================
-    # 场景 A: 上传新书 (智能拆书台)
+    # 分支 A: 上传新书 (分类智能拆书)
     # =====================================================
-    if "➕" in sel_book:
-        st.markdown("""
-        <div class="bs-card" style="border-left: 5px solid #0d6efd;">
-            <h4>🚀 第一步：建立目录结构</h4>
-            <p style="color:#666; font-size:14px;">
-                无论你是上传<b>教材</b>还是<b>题库</b>，请先在这里上传。<br>
-                AI 会读取 PDF 目录，帮你把大文件拆分成<b>“第一章、第二章...”</b>。<br>
-                拆分完成后，你可以在下方的控制台针对每一章进行<b>“出题”</b>或<b>“录题”</b>。
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-
+    if "上传新" in sel_book:
+        st.markdown("#### 📤 智能拆书台")
+        
+        # 1. 核心改进：前置分类选择
+        doc_type = st.radio("请告诉 AI 这份资料的类型：", 
+                           ["📖 教材/知识点汇总 (用于学习)", "📑 习题集/真题卷 (用于刷题)"], 
+                           horizontal=True)
+        
         up_file = st.file_uploader("上传 PDF 文件", type="pdf")
         
         if up_file:
             try:
+                # 检查 PDF
                 with pdfplumber.open(up_file) as pdf: total_pages = len(pdf.pages)
-                st.success(f"文件页数: {total_pages} 页")
+                st.success(f"文件已加载，共 {total_pages} 页")
                 
-                # Step 1: 扫描
+                # Session 状态管理
                 if 'toc_analysis' not in st.session_state:
-                    if st.button("🚀 开始分析目录结构", type="primary"):
+                    
+                    if st.button("🚀 Step 1: 开始 AI 目录分析", type="primary"):
+                        
+                        # A. 读取目录文字
                         with st.spinner("正在读取前 20 页目录..."):
                             toc_text = extract_pdf(up_file, 1, min(20, total_pages))
                         
-                        with st.spinner("AI 正在规划章节..."):
-                            p = f"""
-                            分析目录文本，提取章节。总页数{total_pages}。
-                            返回JSON列表: [{{"title":"第一章...","start_page":5,"end_page":20}}]。
-                            文本：{toc_text[:8000]}
-                            """
-                            # 强制用 Flash 省钱
-                            res = call_ai_universal(p, model_override="google/gemini-1.5-flash")
-                            if res:
-                                try:
-                                    clean = res.replace("```json","").replace("```","").strip()
-                                    st.session_state.toc_analysis = json.loads(clean)
-                                    st.rerun()
-                                except: st.error("AI 解析失败，请重试")
-                
-                # Step 2: 确认
+                        if len(toc_text) < 50:
+                            st.error("无法提取目录文字，请检查是否为扫描版 PDF。")
+                        else:
+                            # B. AI 分析 (根据类型调整 Prompt)
+                            with st.spinner(f"AI 正在识别{'章节结构' if '教材' in doc_type else '试卷结构'}..."):
+                                
+                                # 差异化 Prompt
+                                if "教材" in doc_type:
+                                    role_desc = "你是一个图书编辑。"
+                                    task_desc = "提取书中的【章节目录】（如第一章、第二章...）。"
+                                else:
+                                    role_desc = "你是一个考试院管理员。"
+                                    task_desc = "提取书中的【试卷名称】或【章节练习题】（如 2024真题、第一章练习题...）。"
+                                
+                                p = f"""
+                                {role_desc} 请分析以下目录文本。
+                                任务：{task_desc}
+                                总页数：{total_pages}。
+                                
+                                【必须】返回纯 JSON 列表，格式：
+                                [
+                                    {{"title": "名称...", "start_page": 5, "end_page": 10}}
+                                ]
+                                如果目录不清晰，请根据文本逻辑合理推断起止页码。
+                                
+                                待分析文本：
+                                {toc_text[:8000]}
+                                """
+                                
+                                # 强力清洗逻辑
+                                res = call_ai_universal(p)
+                                if res:
+                                    try:
+                                        clean = res.replace("```json","").replace("```","").strip()
+                                        s_idx = clean.find('[')
+                                        e_idx = clean.rfind(']') + 1
+                                        if s_idx != -1 and e_idx != -1: clean = clean[s_idx:e_idx]
+                                        
+                                        st.session_state.toc_analysis = json.loads(clean)
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error("AI 解析目录失败")
+                                        with st.expander("查看原始返回"): st.text(res)
+                                else:
+                                    st.error("网络请求超时，请重试")
+
+                # Step 2: 确认与切分
                 if 'toc_analysis' in st.session_state:
-                    st.write("##### 📝 确认拆分方案")
+                    st.write("##### 📝 Step 2: 确认拆分结构")
                     edited_df = st.data_editor(
                         st.session_state.toc_analysis, 
                         num_rows="dynamic",
                         column_config={
-                            "title": "章节名称",
+                            "title": "章节/试卷名称",
                             "start_page": st.column_config.NumberColumn("起始页", min_value=1),
                             "end_page": st.column_config.NumberColumn("结束页", min_value=1)
                         }, use_container_width=True
                     )
                     
-                    if st.button("✂️ 执行拆分并保存"):
+                    if st.button("✂️ Step 3: 执行拆分并保存"):
                         progress_bar = st.progress(0)
+                        status_box = st.empty()
+                        
                         try:
-                            # 建书
+                            # 1. 建书
                             book_res = supabase.table("books").insert({
                                 "user_id": user_id, "subject_id": sid, "title": up_file.name.replace(".pdf",""), "total_pages": total_pages
                             }).execute()
                             bid = book_res.data[0]['id']
                             
-                            # 建章
-                            for i, chap in enumerate(edited_df):
+                            # 2. 循环处理
+                            total_items = len(edited_df)
+                            for i, item in enumerate(edited_df):
+                                status_box.info(f"正在处理 ({i+1}/{total_items}): {item['title']}")
+                                
+                                # 提取该段落文字
                                 up_file.seek(0)
-                                txt = extract_pdf(up_file, chap['start_page'], chap['end_page'])
+                                txt = extract_pdf(up_file, item['start_page'], item['end_page'])
+                                
                                 if len(txt) > 10:
+                                    # 存章节
                                     c_res = supabase.table("chapters").insert({
-                                        "book_id": bid, "title": chap['title'], "start_page": chap['start_page'], "end_page": chap['end_page'], "user_id": user_id
+                                        "book_id": bid, "title": item['title'], 
+                                        "start_page": item['start_page'], "end_page": item['end_page'], 
+                                        "user_id": user_id
                                     }).execute()
-                                    # 默认存入 materials (作为教材或题目原文)
-                                    save_material_v3(c_res.data[0]['id'], txt, user_id)
-                                progress_bar.progress((i+1)/len(edited_df))
+                                    cid = c_res.data[0]['id']
+                                    
+                                    # 存内容 (打上标签)
+                                    src_type = "textbook" if "教材" in doc_type else "real_exam"
+                                    save_material_v3(cid, txt, user_id) # 默认存入 materials 表
+                                    
+                                    # 🔥 如果是习题集，尝试自动标记 (可选高级功能)
+                                    # 这里先只存文本，在后续“管理”界面提供一键提取按钮
+                                
+                                progress_bar.progress((i+1)/total_items)
                             
-                            st.success("拆分完成！")
+                            st.balloons()
+                            st.success("✅ 资料已全部入库！")
                             del st.session_state.toc_analysis
-                            # 自动跳转到新书 (索引 + 1 因为第一个选项是"上传新书")
-                            st.session_state.current_book_index = len(books) + 1 
-                            time.sleep(1)
+                            time.sleep(2)
                             st.rerun()
                         except Exception as e:
-                            st.error(f"出错: {e}")
-            except: st.error("文件无效")
+                            st.error(f"入库失败: {e}")
+
+            except Exception as e:
+                st.error(f"文件读取错误: {e}")
 
     # =====================================================
-    # 场景 B: 书籍控制台 (上传完自动跳到这里)
+    # 分支 B: 已有书籍管理 (管理 + 提取)
     # =====================================================
     elif books:
-        # 获取当前书
+        # 获取当前书 ID
         bid = next(b['id'] for b in books if b['title'] == sel_book)
         chapters = get_chapters(bid)
         
+        # --- 顶部管理区 ---
+        c_title, c_del = st.columns([4, 1])
+        with c_title:
+            st.markdown(f"### 📘 {sel_book}")
+        with c_del:
+            # 🔥 之前的删除功能保留在这里
+            with st.popover("⚙️ 管理", use_container_width=True):
+                st.warning("危险操作")
+                if st.button("🗑️ 删除此书", key="del_book_btn"):
+                    supabase.table("books").delete().eq("id", bid).execute()
+                    st.success("已删除")
+                    time.sleep(1)
+                    st.rerun()
+
         if not chapters:
-            st.warning("本书暂无章节。")
+            st.warning("本书无章节数据。")
         else:
-            # 3. 选择章节
-            c3, c4 = st.columns([2, 1])
-            with c3:
-                sel_chap = st.selectbox("3. 选择具体章节进行操作", [c['title'] for c in chapters])
+            # 章节选择
+            c_chap, c_stat = st.columns([2, 1])
+            with c_chap:
+                sel_chap = st.selectbox("选择章节/试卷", [c['title'] for c in chapters])
                 cid = next(c['id'] for c in chapters if c['title'] == sel_chap)
-            with c4:
-                # 数据统计小卡片
-                m_cnt = supabase.table("materials").select("id", count="exact").eq("chapter_id", cid).execute().count
-                q_cnt = supabase.table("question_bank").select("id", count="exact").eq("chapter_id", cid).execute().count
+            
+            # 获取该章节已有的资料
+            mats = supabase.table("materials").select("content").eq("chapter_id", cid).execute().data
+            q_count = supabase.table("question_bank").select("id", count="exact").eq("chapter_id", cid).execute().count
+            
+            with c_stat:
                 st.markdown(f"""
-                <div style="background:#fff; padding:10px; border-radius:8px; border:1px solid #eee; margin-top:28px; text-align:center; font-size:13px;">
-                    📚 原文: <b>{m_cnt}</b> | 📑 题库: <b>{q_cnt}</b>
+                <div style='text-align:right; margin-top:20px; color:#666'>
+                    📄 文本: {'✅ 有' if mats else '❌ 无'} <br> 
+                    📝 题目: <b>{q_count}</b> 道
                 </div>
                 """, unsafe_allow_html=True)
 
-            st.markdown("---")
-            
-            # --- 核心操作区 (Tabs) ---
-            t1, t2, t3 = st.tabs(["📖 轨道A: 补充教材/AI出新题", "📑 轨道B: 真题提取/录入", "🎓 AI 导学讲义"])
-            
-            # [Tab 1]
-            with t1:
-                st.caption("如果你上传的是《教材》，AI 会阅读这里的文字，然后为你“无中生有”生成新题。")
-                
-                # 检查是否已有拆分好的内容
-                exist_mats = supabase.table("materials").select("id").eq("chapter_id", cid).execute().data
-                if exist_mats:
-                    st.success("✅ 本章已有基础文本 (来自拆书步骤)。你可以直接去【章节特训】让 AI 出题。")
-                else:
-                    st.info("本章暂无文本。请上传 PDF/Word。")
-                    
-                up_a = st.file_uploader("补充上传 (覆盖或新增)", type=['pdf','docx'], key='up_a')
-                if st.button("📥 存入教材库") and up_a:
-                    with st.spinner("提取中..."):
-                        txt = extract_pdf(up_a) if up_a.name.endswith('.pdf') else extract_text_from_docx(up_a)
-                        if len(txt)>50:
-                            save_material_v3(cid, txt, user_id)
-                            st.success("存入成功")
-                            time.sleep(1)
-                            st.rerun()
+            st.divider()
 
-            # [Tab 2] (保持你之前的真题提取逻辑)
-            with t2:
-                st.caption("如果你上传的是《600题》，请在这里操作。AI 会把题目‘抠’出来存进数据库。")
-                
-                # ... (这里放之前的真题提取代码，包含页码选择和强力清洗) ...
-                # 为节省篇幅，这里简写逻辑，请务必保留之前那个完善的带调试窗的代码
-                up_b = st.file_uploader("上传真题卷", type=['pdf','docx'], key='up_b')
-                # 提示：如果刚才拆书时已经把题目文本存进 materials 了，其实可以直接从 materials 读取文本发给 AI 提取
-                # 这是一个高级优化：
-                if st.button("🔍 从已拆分的文本中提取题目 (推荐)"):
-                    # 从 materials 表读取刚才拆出来的文本
-                    mats = supabase.table("materials").select("content").eq("chapter_id", cid).execute().data
-                    if mats:
-                        raw_text = mats[0]['content']
-                        # 调用 AI 提取 (复用之前的 Prompt)
-                        with st.spinner("AI 正在分析本章文本中的题目..."):
-                            p = f"提取文本中的题目。纯JSON列表。文本：{raw_text[:20000]}"
-                            r = call_ai_universal(p)
-                            if r:
-                                try:
-                                    clean = r.replace("```json","").replace("```","").strip()
-                                    data = json.loads(clean)
-                                    # 存入
-                                    fmt = [{"question":x['content'], "options":x['options'], "answer":x['correct_answer'], "explanation":x['explanation']} for x in data]
-                                    save_questions_v3(fmt, cid, user_id, origin="extraction")
-                                    st.success(f"成功从原文中提取 {len(data)} 道题！")
-                                except: st.error("AI 提取失败")
-                    else:
-                        st.error("本章没有文本，请先上传。")
+            # --- 功能 Tabs ---
+            # 根据是否有文本资料，动态显示功能
+            t1, t2 = st.tabs(["🧠 AI 提取/生成", "👀 查看原始内容"])
             
-            # [Tab 3]
-            with t3:
-                if st.button("✨ 生成本章讲义"):
-                    # ... (之前的讲义生成逻辑) ...
-                    pass
+            with t1:
+                if not mats:
+                    st.warning("该章节没有文本内容，无法处理。")
+                    st.caption("可能是拆书时提取失败，或者上传的是纯图片 PDF。")
+                    # 补录入口
+                    re_up = st.file_uploader("补录 PDF/Word", type=['pdf','docx'], key=f"re_{cid}")
+                    if re_up and st.button("上传补录"):
+                        txt = extract_pdf(re_up) if re_up.name.endswith('.pdf') else extract_text_from_docx(re_up)
+                        save_material_v3(cid, txt, user_id)
+                        st.experimental_rerun()
+                else:
+                    # 核心处理区
+                    raw_text = mats[0]['content']
+                    st.info(f"本章包含 {len(raw_text)} 字的文本资料。")
+                    
+                    c_gen_type = st.radio("你想做什么？", ["📝 从中提取题目 (它是习题集)", "🎓 生成学习讲义 (它是教材)"], horizontal=True)
+                    
+                    # 选项 A: 提取题目
+                    if "提取题目" in c_gen_type:
+                        hint = st.text_input("提示词 (例如：只提取选择题，忽略水印)", value="")
+                        if st.button("🚀 开始 AI 识别题目", type="primary"):
+                            with st.spinner("AI 正在扫描题目..."):
+                                p = f"""
+                                从以下文本中提取会计题目。
+                                提示：{hint}
+                                必须返回纯 JSON 列表：[{{ "question": "...", "options": ["A.","B."], "answer": "A", "explanation": "..." }}]
+                                文本：{raw_text[:15000]}
+                                """
+                                res = call_ai_universal(p)
+                                if res:
+                                    try:
+                                        clean = res.replace("```json","").replace("```","").strip()
+                                        s = clean.find('['); e = clean.rfind(']')+1
+                                        data = json.loads(clean[s:e])
+                                        
+                                        # 存入
+                                        fmt = [{"question":x['content'], "options":x['options'], "answer":x['correct_answer'], "explanation":x['explanation']} for x in data]
+                                        save_questions_v3(fmt, cid, user_id, origin="extraction")
+                                        st.success(f"成功提取并存入 {len(data)} 道题！")
+                                    except: st.error("AI 提取失败，格式错误")
+
+                    # 选项 B: 生成讲义
+                    else:
+                        if st.button("✨ 生成生活化讲义"):
+                            with st.spinner("AI 老师正在备课..."):
+                                p = f"生成通俗易懂的讲义，包含生活案例。内容：{raw_text[:15000]}"
+                                res = call_ai_universal(p)
+                                if res:
+                                    m_name = st.session_state.get('selected_provider', 'AI')
+                                    supabase.table("ai_lessons").insert({
+                                        "chapter_id": cid, "user_id": user_id, "title": f"{m_name} 讲义", "content": res, "ai_model": m_name
+                                    }).execute()
+                                    st.success("讲义已生成，请去【AI 课堂】查看！")
+
+            with t2:
+                if mats:
+                    st.text_area("原始内容预览", mats[0]['content'], height=300)
+                else:
+                    st.caption("无内容")
 # === 🎓 AI 课堂 (讲义) ===
 elif menu == "🎓 AI 课堂 (讲义)":
     st.title("🎓 智能讲义")
@@ -1131,6 +1176,7 @@ elif menu == "⚙️ 设置中心":
             st.success("已清空所有学习记录，一切重新开始！")
             time.sleep(1)
             st.rerun()
+
 
 
 
