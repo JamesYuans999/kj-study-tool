@@ -1020,8 +1020,8 @@ elif menu == "📝 章节特训": # 注意菜单名字要和你侧边栏定义�
 # =========================================================
 # ⚔️ 模考 (V3版：跨章节组卷 + 智能阅卷 + 历史归档)
 # =========================================================
-elif menu == "📝 章节特训": # 注意菜单名字要和你侧边栏定义的一致
-    st.title("📝 章节突破")
+elif menu == "⚔️ 全真模考":
+    st.title("⚔️ 全真模拟")
     
     # 初始化考试状态
     if 'exam_session' not in st.session_state:
@@ -1316,192 +1316,81 @@ elif menu == "📝 章节特训": # 注意菜单名字要和你侧边栏定义�
             st.session_state.exam_session = None
             st.rerun()
 # =========================================================
-# 📊 弱项分析 & ❌ 错题本
+# 📊 弱项分析 (V3版：可视化看板 + AI 诊断)
 # =========================================================
 elif menu == "📊 弱项分析":
     st.title("📊 学习效果分析")
     
-    # 1. 获取所有做题记录
+    # 1. 获取数据 (联表查询有点慢，这里只查记录表，用 Python 处理)
     try:
-        # V3: user_answers 表
-        answers = supabase.table("user_answers").select("*").eq("user_id", user_id).execute().data
+        # 获取最近 500 条做题记录
+        rows = supabase.table("user_answers").select("*").order("created_at", desc=True).limit(500).execute().data
         
-        if not answers:
-            st.info("暂无做题数据，快去刷几道题吧！")
+        if not rows:
+            st.info("暂无做题数据，快去【章节特训】或【全真模考】刷几道题吧！")
         else:
-            df = pd.DataFrame(answers)
+            df = pd.DataFrame(rows)
             
-            # --- 仪表盘 ---
+            # --- 核心指标卡 ---
             total = len(df)
-            correct = len(df[df['is_correct']==True])
-            rate = int((correct/total)*100) if total>0 else 0
+            correct_count = len(df[df['is_correct'] == True])
+            rate = int((correct_count / total) * 100)
+            
+            # 计算平均耗时 (秒)
+            avg_time = int(df['time_taken'].mean()) if 'time_taken' in df.columns else 0
             
             c1, c2, c3 = st.columns(3)
-            c1.metric("总刷题量", total)
-            c2.metric("正确率", f"{rate}%")
-            
-            # --- 图表 1: 正确率分布 (Pie) ---
-            fig_pie = px.pie(df, names='is_correct', title='正确率分布', 
-                             color_discrete_sequence=['#00C090', '#FF7043'],
-                             labels={'is_correct': '是否正确'})
-            # 修改标签显示
-            fig_pie.update_traces(textinfo='percent+label')
-            
-            # --- 图表 2: 每日刷题趋势 (Bar) ---
-            df['date'] = pd.to_datetime(df['created_at']).dt.date
-            daily = df.groupby('date').size().reset_index(name='count')
-            fig_bar = px.bar(daily, x='date', y='count', title='每日勤奋度', color_discrete_sequence=['#00C090'])
-            
-            # 布局图表
-            chart1, chart2 = st.columns(2)
-            chart1.plotly_chart(fig_pie, use_container_width=True)
-            chart2.plotly_chart(fig_bar, use_container_width=True)
-            
-            # --- AI 诊断建议 ---
-            st.markdown("### 🩺 AI 诊断")
-            if st.button("生成深度学习建议"):
-                with st.spinner("AI 正在分析你的错题模式..."):
-                    # 简单统计：最近错得多的题目类型（需联表，这里简化为根据正确率生成）
-                    prompt = f"我的做题记录：共{total}题，正确率{rate}%。请像老师一样给出一针见血的复习建议。"
-                    res = call_ai_universal(prompt)
-                    if res:
-                        st.markdown(f"<div class='lesson-content'>{res}</div>", unsafe_allow_html=True)
+            with c1:
+                st.markdown(f"<div class='bs-card' style='text-align:center'><div style='color:#888'>综合正确率</div><div style='font-size:32px; color:#0d6efd; font-weight:bold'>{rate}%</div></div>", unsafe_allow_html=True)
+            with c2:
+                st.markdown(f"<div class='bs-card' style='text-align:center'><div style='color:#888'>刷题总数</div><div style='font-size:32px; color:#198754; font-weight:bold'>{total}</div></div>", unsafe_allow_html=True)
+            with c3:
+                st.markdown(f"<div class='bs-card' style='text-align:center'><div style='color:#888'>平均每题耗时</div><div style='font-size:32px; color:#ffc107; font-weight:bold'>{avg_time}s</div></div>", unsafe_allow_html=True)
 
-    except Exception as e:
-        st.error(f"分析加载失败: {e}")
-        
-elif menu == "❌ 错题本":
-    st.title("❌ 错题集 & 智能私教")
-    
-    # 1. 获取所有错题 (按时间倒序)
-    try:
-        errs = supabase.table("user_answers").select("*, question_bank(*)").eq("user_id", user_id).eq("is_correct", False).order("created_at", desc=True).execute().data
-    except Exception as e:
-        st.error(f"数据加载失败: {e}")
-        errs = []
-    
-    if not errs:
-        st.markdown("""
-        <div style="text-align:center; padding:40px; color:#888;">
-            <h3>🎉 太棒了！目前没有错题</h3>
-            <p>去刷几道新题挑战一下吧！</p>
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        # --- 🔥 核心去重逻辑 (防止报错的关键) ---
-        unique_mistakes = []
-        seen_qids = set()
-        
-        for e in errs:
-            # 确保数据完整
-            if not e.get('question_bank'): continue
+            st.divider()
+
+            # --- 图表区 ---
+            col_chart1, col_chart2 = st.columns(2)
             
-            qid = e['question_id']
-            # 只有当这个题目ID第一次出现时才显示 (保留最近的一条记录)
-            if qid not in seen_qids:
-                unique_mistakes.append(e)
-                seen_qids.add(qid)
-        
-        st.info(f"当前共有 {len(unique_mistakes)} 道错题待复习 (已自动合并重复记录)")
-        
-        # 2. 循环渲染
-        for i, e in enumerate(unique_mistakes):
-            q = e['question_bank']
+            with col_chart1:
+                st.subheader("📈 正确率分布")
+                # 饼图
+                fig_pie = px.pie(df, names='is_correct', title='正误比例', 
+                                color_discrete_map={True: '#00C090', False: '#FF7043'},
+                                labels={'is_correct': '是否正确', 'True': '正确', 'False': '错误'})
+                st.plotly_chart(fig_pie, use_container_width=True)
+                
+            with col_chart2:
+                st.subheader("🔥 每日刷题热度")
+                # 柱状图
+                df['date'] = pd.to_datetime(df['created_at']).dt.date
+                daily_counts = df.groupby('date').size().reset_index(name='count')
+                fig_bar = px.bar(daily_counts, x='date', y='count', title='每日刷题量')
+                fig_bar.update_traces(marker_color='#0d6efd')
+                st.plotly_chart(fig_bar, use_container_width=True)
+
+            # --- AI 诊断区 ---
+            st.divider()
+            st.subheader("🩺 AI 学习诊断")
             
-            # 使用 record_id 作为唯一 Key，配合去重逻辑，确保绝对不报错
-            rec_id = e['id']
-            q_id = q['id']
-            
-            # 获取历史对话
-            db_chat_history = e.get('ai_chat_history') or []
-            
-            # 卡片展示
-            with st.expander(f"🔴 {q['content'][:30]}... (点击展开)"):
-                st.markdown(f"### 📄 题目：\n{q['content']}")
-                st.divider() # 加条分割线更清晰
-                # --- 🎨 选项美化开始 ---
-                if q.get('options') and isinstance(q['options'], list):
-                    st.write("**选项：**")
-                    for opt in q['options']:
-                        # 使用 HTML/CSS 渲染漂亮的选项卡片
+            if st.button("生成深度分析报告", type="primary"):
+                with st.spinner("AI 正在分析你的做题习惯与薄弱点..."):
+                    # 简化的分析 Prompt
+                    prompt = f"""
+                    用户最近做了 {total} 道会计题，正确率为 {rate}%。
+                    平均每题耗时 {avg_time} 秒。
+                    请根据这些数据，给出一份简短的学习建议。
+                    指出他可能存在的问题（如：是否做得太快导致粗心？还是基础不牢？）。
+                    语气：鼓励且专业。
+                    """
+                    advice = call_ai_universal(prompt)
+                    if advice:
                         st.markdown(f"""
-                        <div class="list-group-item">
-                            <i class="bi bi-circle"></i> {opt}
-                        </div>
-                            {opt}
+                        <div class="bs-card" style="border-left: 5px solid #6610f2; background-color: #f3f0ff;">
+                            <h5>🤖 你的专属诊断书：</h5>
+                            {advice}
                         </div>
                         """, unsafe_allow_html=True)
-                # --- 🎨 选项美化结束 ---
-                
-                c1, c2 = st.columns(2)
-                c1.error(f"你的错选：{e['user_response']}")
-                c2.success(f"正确答案：{q['correct_answer']}")
-                
-                st.info(f"💡 **标准解析：** {q['explanation']}")
-                
-                st.divider()
-                
-                # --- 功能按钮区 ---
-                col_ask, col_clear, col_del = st.columns([1.2, 1, 1])
-                
-                # 按钮 1: AI 举例 (带 Key 防止冲突)
-                # 逻辑：如果没有历史，显示"举例子"；如果有历史，显示"继续追问"的提示
-                btn_label = "🤔 我不理解 (AI举例)" if not db_chat_history else "✨ 继续追问 AI"
-                
-                # 仅当没有历史记录时，这个按钮触发初始化举例
-                if not db_chat_history:
-                    if col_ask.button(btn_label, key=f"btn_ask_{rec_id}"):
-                        prompt = f"用户做错题：'{q['content']}'。答案{q['correct_answer']}。解析{q['explanation']}。请用生活案例通俗解释。"
-                        with st.spinner("AI 正在思考..."):
-                            res = call_ai_universal(prompt)
-                            if res:
-                                new_h = [{"role": "model", "content": res}]
-                                supabase.table("user_answers").update({"ai_chat_history": new_h}).eq("id", rec_id).execute()
-                                st.rerun()
-                else:
-                    col_ask.caption("👇 在下方对话框继续提问")
 
-                # 按钮 2: 清除记忆
-                if db_chat_history:
-                    if col_clear.button("🗑️ 清除记忆", key=f"btn_clr_{rec_id}"):
-                        supabase.table("user_answers").update({"ai_chat_history": []}).eq("id", rec_id).execute()
-                        st.rerun()
-
-                # 按钮 3: 移除错题 (批量移除该题目的所有记录)
-                if col_del.button("✅ 已掌握", key=f"btn_rm_{rec_id}"):
-                    # 🔥 关键：根据 question_id 把所有重复的错误记录都标记为正确，防止旧记录复活
-                    supabase.table("user_answers").update({"is_correct": True}).eq("user_id", user_id).eq("question_id", q_id).execute()
-                    st.toast("已彻底移出！")
-                    time.sleep(0.5)
-                    st.rerun()
-
-                # --- 聊天流展示 ---
-                if db_chat_history:
-                    st.markdown("---")
-                    st.caption("🤖 AI 私教对话记录")
-                    for msg in db_chat_history:
-                        css = "chat-ai" if msg['role'] == "model" else "chat-user"
-                        prefix = "🤖 AI" if msg['role'] == "model" else "👤 我"
-                        st.markdown(f"<div class='{css}'><b>{prefix}:</b><br>{msg['content']}</div>", unsafe_allow_html=True)
-                    
-                    # 追问输入框 (使用 Form 避免刷新重置)
-                    with st.form(key=f"form_chat_{rec_id}"):
-                        user_input = st.text_input("继续追问...", placeholder="例如：那如果是反过来呢？")
-                        if st.form_submit_button("发送 ⬆️"):
-                            if user_input:
-                                # 构建新历史
-                                temp_history = db_chat_history + [{"role": "user", "content": user_input}]
-                                
-                                with st.spinner("AI 正在回复..."):
-                                    ai_reply = call_ai_universal(user_input, history=db_chat_history)
-                                    if ai_reply:
-                                        final_history = temp_history + [{"role": "model", "content": ai_reply}]
-                                        supabase.table("user_answers").update({"ai_chat_history": final_history}).eq("id", rec_id).execute()
-                                        st.rerun()
-
-
-
-
-
-
-
+    except Exception as e:
+        st.error(f"数据加载失败: {e}")
