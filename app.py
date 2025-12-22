@@ -450,7 +450,7 @@ elif menu == "📂 智能拆书 & 资料":
         <div class="bs-card" style="border-left: 5px solid #0d6efd;">
             <h4>🚀 第一步：建立目录结构</h4>
             <p style="color:#666; font-size:14px;">
-                无论你是上传<b>教材</b>还是<b>600题母题库</b>，请先在这里上传。<br>
+                无论你是上传<b>教材</b>还是<b>题库</b>，请先在这里上传。<br>
                 AI 会读取 PDF 目录，帮你把大文件拆分成<b>“第一章、第二章...”</b>。<br>
                 拆分完成后，你可以在下方的控制台针对每一章进行<b>“出题”</b>或<b>“录题”</b>。
             </p>
@@ -1131,6 +1131,7 @@ elif menu == "⚙️ 设置中心":
             st.success("已清空所有学习记录，一切重新开始！")
             time.sleep(1)
             st.rerun()
+
 
 
 
