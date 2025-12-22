@@ -570,17 +570,37 @@ elif menu == "📂 智能拆书 & 资料":
                 except Exception as e:
                     st.error(f"文件读取错误: {e}")
 
-    # =====================================================
-    # 分支 B: 已有书籍管理 (双轨录入核心区)
+# =====================================================
+    # 分支 B: 已有书籍管理 (修复版：含删除功能)
     # =====================================================
     elif books:
-        # 获取当前书 ID
-        bid = next(b['id'] for b in books if b['title'] == sel_book)
-        chapters = get_chapters(bid)
+        # 1. 顶部：书籍选择与管理
+        c_sel_b, c_manage_b = st.columns([3, 1])
         
-        # 3. 选择章节 (用于定位上传目标)
+        with c_sel_b:
+            # 获取当前书 ID
+            bid = next(b['id'] for b in books if b['title'] == sel_book)
+            chapters = get_chapters(bid)
+        
+        with c_manage_b:
+            # --- 🔥 新增：书籍管理入口 ---
+            with st.popover("⚙️ 管理此书", use_container_width=True):
+                st.markdown(f"**当前选中：** {sel_book}")
+                st.warning("危险操作区域")
+                
+                if st.button("🗑️ 删除整本书 (含所有数据)", type="primary", key="del_whole_book"):
+                    try:
+                        # 级联删除：书没了，章节、资料、题目都会自动消失
+                        supabase.table("books").delete().eq("id", bid).execute()
+                        st.toast("书籍已彻底删除！")
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"删除失败: {e}")
+
+        # 2. 章节选择与统计
         if not chapters:
-            st.warning("本书暂无章节，可能是解析失败。")
+            st.warning("本书暂无章节，可能是解析失败。建议删除后重新上传。")
         else:
             c3, c4 = st.columns([2, 1])
             with c3:
@@ -590,18 +610,33 @@ elif menu == "📂 智能拆书 & 资料":
                 st.write("") # 占位
                 st.write("")
                 # 检查资料状态
-                m_count = supabase.table("materials").select("id", count="exact").eq("chapter_id", cid).execute().count
-                q_count = supabase.table("question_bank").select("id", count="exact").eq("chapter_id", cid).execute().count
-                st.caption(f"📚 教材: {m_count} 份 | 📑 真题: {q_count} 道")
+                try:
+                    m_count = supabase.table("materials").select("id", count="exact").eq("chapter_id", cid).execute().count
+                    q_count = supabase.table("question_bank").select("id", count="exact").eq("chapter_id", cid).execute().count
+                    st.markdown(f"<div style='text-align:right; color:#666; font-size:13px;'>📚 教材: <b>{m_count}</b> | 📑 真题: <b>{q_count}</b></div>", unsafe_allow_html=True)
+                except: pass
 
             st.markdown("---")
             
-            # --- 🔥 核心双轨上传区 (Tabs) ---
+            # --- 3. 核心双轨上传区 (Tabs) ---
             t1, t2, t3 = st.tabs(["📖 轨道A: 补充教材 (生成源)", "📑 轨道B: 录入真题 (提取源)", "🎓 生成 AI 导学"])
             
-            # [Tab 1] 上传教材
+            # [Tab 1] 上传教材 (带删除功能)
             with t1:
                 st.info("💡 用于 AI 学习。上传 PDF/Word 后，AI 可基于此生成新题目或讲义。")
+                
+                # 显示已有教材列表 (方便删除单份资料)
+                curr_mats = supabase.table("materials").select("id, content, created_at").eq("chapter_id", cid).execute().data
+                if curr_mats:
+                    with st.expander(f"已上传 {len(curr_mats)} 份资料 (点击管理)"):
+                        for m in curr_mats:
+                            cm1, cm2 = st.columns([4, 1])
+                            with cm1: st.caption(f"📄 ...{m['content'][:30]}... ({m['created_at'][:10]})")
+                            with cm2: 
+                                if st.button("删除", key=f"del_mat_{m['id']}"):
+                                    supabase.table("materials").delete().eq("id", m['id']).execute()
+                                    st.rerun()
+
                 up_a = st.file_uploader("上传教材/讲义", type=['pdf','docx'], key='up_a')
                 if st.button("📥 解析并存入资料库") and up_a:
                     with st.spinner("正在提取文字..."):
@@ -614,7 +649,7 @@ elif menu == "📂 智能拆书 & 资料":
                         else:
                             st.error("内容太少，无法入库。")
 
-            # [Tab 2] 录入真题 (带页码控制 & 强力清洗)
+            # [Tab 2] 录入真题
             with t2:
                 st.info("⚡ 用于扩充题库。AI 将从文档中提取题目和答案，存入数据库供刷题。")
                 up_b = st.file_uploader("上传真题/练习卷", type=['pdf','docx'], key='up_b')
@@ -651,7 +686,7 @@ elif menu == "📂 智能拆书 & 资料":
                             raw = extract_pdf(up_b, q_start, q_end)
                             if sep_ans: 
                                 up_b.seek(0)
-                                raw += "\n【答案区】\n" + extract_pdf(up_b, a_start, a_end)
+                                raw += "\n【答案区域】\n" + extract_pdf(up_b, a_start, a_end)
                         else:
                             raw = extract_text_from_docx(up_b)
                     
@@ -669,7 +704,6 @@ elif menu == "📂 智能拆书 & 资料":
                             
                             if res:
                                 try:
-                                    # 强力清洗逻辑
                                     clean = res.replace("```json","").replace("```","").strip()
                                     s_idx = clean.find('[')
                                     e_idx = clean.rfind(']') + 1
@@ -688,7 +722,6 @@ elif menu == "📂 智能拆书 & 资料":
                     edited = st.data_editor(st.session_state.extracted_data, num_rows="dynamic")
                     
                     if st.button("💾 确认入库"):
-                        # 转换并存入 V3 题库
                         fmt_qs = [{
                             'question': q['question'],
                             'options': q['options'], 
@@ -1237,5 +1270,6 @@ elif menu == "⚙️ 设置中心":
             st.success("已清空所有学习记录，一切重新开始！")
             time.sleep(1)
             st.rerun()
+
 
 
