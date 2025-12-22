@@ -1,147 +1,4 @@
 import streamlit as st
-# ... 其他 import ...
-
-# --- 1. 全局配置与 Bootstrap 风格定义 ---
-st.set_page_config(page_title="中级会计冲刺班 Pro", page_icon="🥝", layout="wide")
-
-# 引入 Bootstrap Icons (图标库) 和 自定义高级 CSS
-st.markdown("""
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
-<style>
-    /* === 全局设定 (奶油绿主题) === */
-    .stApp {
-        background-color: #F9F9F0;
-        font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-    }
-    
-    /* 侧边栏美化 */
-    [data-testid="stSidebar"] {
-        background-color: #FFFFFF;
-        border-right: 1px solid rgba(0,0,0,0.05);
-        box-shadow: 2px 0 10px rgba(0,0,0,0.02);
-    }
-
-    /* === Bootstrap 风格卡片 (核心) === */
-    .card {
-        background-color: #FFFFFF;
-        border: 1px solid rgba(0,0,0,0.08); /* 淡边框 */
-        border-radius: 12px; /* 圆角 */
-        padding: 20px;
-        margin-bottom: 20px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.02); /* 初始淡阴影 */
-        transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); /* 平滑动画 */
-        position: relative;
-        overflow: hidden;
-    }
-    
-    /* 鼠标悬停特效 (Hover Effect) */
-    .card:hover {
-        box-shadow: 0 12px 24px rgba(0,192,144, 0.15); /* 绿色光晕 */
-        transform: translateY(-4px); /* 向上浮动 */
-        border-color: #00C090;
-    }
-
-    /* === 数据大屏数字 === */
-    .stat-title {
-        color: #6c757d; /* Bootstrap muted color */
-        font-size: 0.9rem;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        font-weight: 600;
-        margin-bottom: 5px;
-    }
-    .stat-value {
-        font-size: 2.2rem;
-        font-weight: 700;
-        color: #2C3E50;
-    }
-    .stat-icon {
-        position: absolute;
-        right: 20px;
-        top: 20px;
-        font-size: 2.5rem;
-        color: rgba(0,192,144, 0.1); /* 浅绿色背景图标 */
-    }
-
-    /* === 按钮 Bootstrap 化 === */
-    .stButton>button {
-        background-color: #00C090;
-        color: white;
-        border-radius: 8px;
-        border: none;
-        padding: 0.5rem 1rem;
-        font-weight: 600;
-        letter-spacing: 0.5px;
-        box-shadow: 0 4px 6px rgba(0, 192, 144, 0.3);
-        transition: all 0.2s ease-in-out;
-        width: 100%;
-    }
-    .stButton>button:hover {
-        background-color: #00A87E;
-        box-shadow: 0 6px 12px rgba(0, 192, 144, 0.4);
-        transform: translateY(-1px);
-    }
-    .stButton>button:active {
-        transform: translateY(1px);
-        box-shadow: none;
-    }
-
-    /* === 选项列表美化 (List Group) === */
-    .list-group-item {
-        background-color: #fff;
-        border: 1px solid rgba(0,0,0,.125);
-        border-left: 5px solid #00C090;
-        border-radius: 0.375rem;
-        padding: 1rem;
-        margin-bottom: 0.5rem;
-        transition: background-color 0.2s;
-    }
-    .list-group-item:hover {
-        background-color: #F0FFF9;
-    }
-
-    /* === 悬浮计时器 (Pill Badge) === */
-    .timer-badge {
-        position: fixed; top: 70px; right: 30px; z-index: 9999;
-        background: linear-gradient(45deg, #00C090, #00E6AC);
-        color: white;
-        padding: 8px 20px;
-        border-radius: 50px;
-        font-weight: bold;
-        font-size: 1.1rem;
-        box-shadow: 0 4px 15px rgba(0,192,144, 0.4);
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        animation: pulse 2s infinite;
-    }
-    
-    @keyframes pulse {
-        0% { box-shadow: 0 0 0 0 rgba(0, 192, 144, 0.7); }
-        70% { box-shadow: 0 0 0 10px rgba(0, 192, 144, 0); }
-        100% { box-shadow: 0 0 0 0 rgba(0, 192, 144, 0); }
-    }
-    
-    /* 聊天气泡优化 */
-    .chat-bubble {
-        padding: 15px; border-radius: 15px; margin: 10px 0; position: relative; max-width: 90%;
-    }
-    .chat-ai {
-        background-color: #FFFFFF; 
-        border-left: 4px solid #00C090;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-    }
-    .chat-user {
-        background-color: #E3F2FD; 
-        margin-left: auto;
-        color: #0D47A1;
-    }
-
-</style>
-""", unsafe_allow_html=True)
-
-from openai import OpenAI
-import streamlit as st
 import requests
 import json
 import datetime
@@ -149,67 +6,119 @@ import pandas as pd
 import pdfplumber
 import time
 import docx
+import random
 from supabase import create_client
 import plotly.express as px
+from openai import OpenAI
+import streamlit.components.v1 as components
 
-# =========================================================
-# 1. 全局配置与“奶油绿”风格定义
-# =========================================================
-st.set_page_config(page_title="中级会计冲刺班 Pro", page_icon="🥝", layout="wide")
+# ==============================================================================
+# 1. 全局配置与 Bootstrap 高级动态特效 (CSS)
+# ==============================================================================
+st.set_page_config(page_title="中级会计 AI 私教 Pro (V3.0)", page_icon="🥝", layout="wide")
 
 st.markdown("""
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
 <style>
-    /* 全局色调 */
-    .stApp { background-color: #F9F9F0; }
-    [data-testid="stSidebar"] { background-color: #FFFFFF; border-right: 1px solid #EEEEEE; }
-    
-    /* 卡片风格 */
-    .css-card {
-        background-color: #FFFFFF; border-radius: 15px; padding: 20px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.05); margin-bottom: 20px; border: 1px solid #F0F0F0;
+    /* === 基础设定：柔和护眼背景 === */
+    .stApp {
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        font-family: 'Segoe UI', 'Roboto', sans-serif;
     }
     
-    /* 聊天气泡风格 */
-    .chat-user {
-        background-color: #E3F2FD; padding: 10px; border-radius: 10px; margin: 5px 0; text-align: right;
-    }
-    .chat-ai {
-        background-color: #F1F8E9; padding: 10px; border-radius: 10px; margin: 5px 0; border-left: 4px solid #00C090;
+    /* === 侧边栏：毛玻璃特效 === */
+    [data-testid="stSidebar"] {
+        background-color: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(12px);
+        border-right: 1px solid rgba(0,0,0,0.05);
+        box-shadow: 4px 0 15px rgba(0,0,0,0.03);
     }
 
-    /* 按钮与高亮 */
-    .big-number { font-size: 32px; font-weight: 800; color: #2C3E50; }
-    .stButton>button {
-        background-color: #00C090; color: white; border-radius: 10px; border: none;
-        height: 45px; font-weight: bold; transition: all 0.2s;
-    }
-    .stButton>button:hover {
-        background-color: #00A87E; transform: translateY(-2px); color: white;
+    /* === 卡片：悬浮呼吸感 (Hover Card) === */
+    .css-card {
+        background-color: #FFFFFF;
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 20px;
+        border: 1px solid rgba(0,0,0,0.04);
+        box-shadow: 0 4px 6px rgba(0,0,0,0.02);
+        transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+        position: relative;
+        overflow: hidden;
     }
     
-    /* 悬浮计时器 */
-    .timer-box {
-        position: fixed; top: 60px; right: 20px; z-index: 999;
-        background-color: #FFFFFF; padding: 10px 20px; border-radius: 30px;
-        box-shadow: 0 4px 15px rgba(0,192,144, 0.2);
-        border: 2px solid #00C090; color: #00C090; font-weight: bold;
+    .css-card:hover {
+        transform: translateY(-5px) scale(1.01);
+        box-shadow: 0 15px 30px rgba(0, 192, 144, 0.15);
+        border-color: #00C090;
     }
+    
+    /* 卡片左侧装饰条 */
+    .css-card::before {
+        content: ''; position: absolute; top: 0; left: 0; width: 4px; height: 100%;
+        background: #00C090; opacity: 0; transition: opacity 0.3s;
+    }
+    .css-card:hover::before { opacity: 1; }
+
+    /* === 统计数字 === */
+    .stat-title {
+        font-size: 0.85rem; color: #6c757d; text-transform: uppercase; letter-spacing: 1px; font-weight: 700;
+    }
+    .stat-value {
+        font-size: 2.4rem; font-weight: 800; color: #2C3E50; letter-spacing: -1px;
+    }
+    .stat-icon {
+        position: absolute; right: 20px; top: 20px; font-size: 2rem; color: rgba(0,192,144, 0.15);
+    }
+
+    /* === 按钮：渐变色胶囊 === */
+    .stButton>button {
+        background: linear-gradient(135deg, #00C090 0%, #00a87e 100%);
+        color: white; border: none; border-radius: 50px; height: 48px; font-weight: 600;
+        box-shadow: 0 4px 10px rgba(0, 192, 144, 0.3); transition: all 0.3s ease; padding: 0 25px;
+    }
+    .stButton>button:hover {
+        transform: translateY(-2px); box-shadow: 0 6px 15px rgba(0, 192, 144, 0.5); filter: brightness(1.1);
+    }
+    .stButton>button:active { transform: translateY(1px); }
+
+    /* === 进度条颜色 === */
+    .stProgress > div > div > div > div { background-color: #00C090; }
+
+    /* === 聊天气泡 === */
+    .chat-user {
+        background-color: #E3F2FD; padding: 12px 18px; border-radius: 15px 15px 0 15px;
+        margin: 10px 0 10px auto; max-width: 85%; color: #1565C0; box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    }
+    .chat-ai {
+        background-color: #FFFFFF; padding: 12px 18px; border-radius: 15px 15px 15px 0;
+        margin: 10px auto 10px 0; max-width: 85%; border-left: 4px solid #00C090; box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    }
+
+    /* === 选项列表 === */
+    .option-item {
+        background: #fff; border: 1px solid #eee; padding: 12px; border-radius: 8px; margin-bottom: 8px;
+        border-left: 4px solid transparent; transition: all 0.2s;
+    }
+    .option-item:hover { border-left-color: #00C090; background-color: #f9fdfb; }
+
+    /* === 成功/警告框 === */
+    .success-box { padding: 15px; background: #E8F5E9; border-radius: 10px; color: #2E7D32; border: 1px solid #C8E6C9; }
+    .warn-box { padding: 15px; background: #FFF3E0; border-radius: 10px; color: #EF6C00; border: 1px solid #FFE0B2; }
+
 </style>
 """, unsafe_allow_html=True)
 
-# =========================================================
-# 2. 核心连接与 Helper 函数
-# =========================================================
+# ==============================================================================
+# 2. 数据库连接与配置
+# ==============================================================================
 try:
     API_KEY = st.secrets["GOOGLE_API_KEY"]
     SUPABASE_URL = st.secrets["supabase"]["url"]
     SUPABASE_KEY = st.secrets["supabase"]["key"]
 except:
-    st.error("🔒 请配置 .streamlit/secrets.toml")
+    st.error("🔒 Secrets 配置丢失！请检查 .streamlit/secrets.toml 文件。")
     st.stop()
-
-
-
 
 @st.cache_resource
 def init_supabase():
@@ -217,481 +126,509 @@ def init_supabase():
 
 supabase = init_supabase()
 
-@st.cache_data(ttl=3600)
-def fetch_google_models(api_key):
-    """
-    专门获取 Google Gemini 可用模型列表
-    """
-    if not api_key: return []
-    
-    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
-    
-    try:
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            # 过滤出支持生成内容(generateContent)的模型，排除 embedding 模型
-            models = []
-            for m in data.get('models', []):
-                if "generateContent" in m.get('supportedGenerationMethods', []):
-                    # Google 返回格式通常是 "models/gemini-1.5-flash"，我们去掉前缀方便展示
-                    name = m['name'].replace("models/", "")
-                    models.append(name)
-            return sorted(models, reverse=True) # 让新模型排前面
-        return []
-    except:
-        return []
+# 用户身份模拟 (生产环境需对接 st.login)
+if 'user_id' not in st.session_state:
+    st.session_state.user_id = "test_user_001"
+user_id = st.session_state.user_id
 
-@st.cache_data(ttl=3600)
-def fetch_openrouter_models(api_key):
+# ==============================================================================
+# 3. 核心功能函数 (AI / DB / File)
+# ==============================================================================
+
+# --- AI 调用 (通用版) ---
+def call_ai_universal(prompt, history=[], model_override=None):
     """
-    获取 OpenRouter 模型列表，并标记是否免费
-    """
-    if not api_key: return []
-    
-    url = "https://openrouter.ai/api/v1/models"
-    headers = {"Authorization": f"Bearer {api_key}"}
-    
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code == 200:
-            raw_data = response.json().get('data', [])
-            processed_list = []
-            
-            for m in raw_data:
-                # 核心逻辑：检查定价是否为 0
-                pricing = m.get('pricing', {})
-                prompt_price = float(pricing.get('prompt', 0))
-                completion_price = float(pricing.get('completion', 0))
-                
-                # 判定免费：价格为0 或者 ID以此为结尾
-                is_free = (prompt_price == 0 and completion_price == 0) or m['id'].endswith(':free')
-                
-                processed_list.append({
-                    "id": m['id'],
-                    "name": m.get('name', m['id']),
-                    "is_free": is_free
-                })
-            
-            # 按字母排序
-            return sorted(processed_list, key=lambda x: x['id'])
-        return []
-    except:
-        return []
-        
-
-def get_user_profile(user_id):
-    """获取用户档案"""
-    try:
-        res = supabase.table("study_profile").select("*").eq("user_id", user_id).execute()
-        if not res.data:
-            supabase.table("study_profile").insert({"user_id": user_id}).execute()
-            return {}
-        return res.data[0]
-    except:
-        return {}
-
-def update_settings(user_id, settings_dict):
-    """更新用户设置 (被 save_model_preference 调用)"""
-    try:
-        # 1. 获取旧设置
-        current_data = get_user_profile(user_id)
-        current_settings = current_data.get('settings') or {}
-        
-        # 2. 合并新设置
-        current_settings.update(settings_dict)
-        
-        # 3. 存回数据库
-        supabase.table("study_profile").update({"settings": current_settings}).eq("user_id", user_id).execute()
-        return True
-    except Exception as e:
-        print(f"Update settings error: {e}")
-        return False
-
-# ------------------------------------------------
-def save_ai_settings():
-    """
-    回调函数：当用户切换 服务商 或 模型 时，自动保存配置到数据库
-    """
-    if st.session_state.get('user_id'):
-        # 1. 获取当前选中的服务商 (从 key='ai_provider_select' 获取)
-        current_provider = st.session_state.get('ai_provider_select')
-        
-        # 2. 获取当前选中的模型
-        # 因为不同服务商对应不同的 selectbox key，我们需要判断
-        current_model = None
-        if current_provider and "OpenRouter" in current_provider:
-            current_model = st.session_state.get('openrouter_model_select')
-        elif current_provider and "DeepSeek" in current_provider:
-            current_model = st.session_state.get('deepseek_model_select')
-        elif current_provider and "Gemini" in current_provider:
-            current_model = st.session_state.get('google_model_select')
-            
-        # 3. 存入数据库
-        settings_to_update = {}
-        if current_provider:
-            settings_to_update["last_provider"] = current_provider
-        if current_model:
-            settings_to_update["last_used_model"] = current_model
-            
-        if settings_to_update:
-            update_settings(st.session_state.user_id, settings_to_update)
-            # st.toast("配置已同步云端", icon="☁️") # 可选：嫌烦可以注释掉提示
-# ------------------------------------------------
-
-def save_model_preference():
-    """回调函数：当用户改变模型时，自动保存到 Supabase"""
-    if st.session_state.get('user_id') and st.session_state.get('openrouter_model_select'):
-        current_model = st.session_state.openrouter_model_select
-        # 更新数据库
-        update_settings(st.session_state.user_id, {"last_used_model": current_model})
-        st.toast(f"已记住模型：{current_model}", icon="💾")
-
-
-def call_ai_universal(prompt, history=[]):
-    """
-    通用 AI 调用接口 (全动态模型版)
+    支持 Gemini / DeepSeek / OpenRouter 的通用接口
     """
     provider = st.session_state.get('selected_provider', 'Gemini')
+    # 优先使用 override，否则使用 session 中的设置
+    target_model = model_override or st.session_state.get('openrouter_model_id', 'google/gemini-2.0-flash-exp:free')
     
     try:
-        # === 分支 A: Google Gemini 官方直连 ===
-        if "Gemini" in provider:
-            api_key = st.secrets["GOOGLE_API_KEY"]
-            
-            # 🔥 动态获取用户选择的模型，如果没有选，兜底用 1.5-flash
-            model_id = st.session_state.get("google_model_id", "gemini-1.5-flash")
-            
-            # Google API URL 构造需要把模型名拼进去
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={api_key}"
-            
+        # A. Google Gemini
+        if "Gemini" in provider and not model_override:
+            g_model = st.session_state.get("google_model_id", "gemini-1.5-flash")
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{g_model}:generateContent?key={API_KEY}"
             headers = {'Content-Type': 'application/json'}
+            
             contents = []
             for h in history:
                 role = "user" if h['role'] == 'user' else "model"
                 contents.append({"role": role, "parts": [{"text": h['content']}]})
             contents.append({"role": "user", "parts": [{"text": prompt}]})
             
-            data = {"contents": contents}
-            response = requests.post(url, headers=headers, json=data, timeout=180)
-            
-            if response.status_code == 200:
-                return response.json()['candidates'][0]['content']['parts'][0]['text']
+            resp = requests.post(url, headers=headers, json={"contents": contents}, timeout=60)
+            if resp.status_code == 200:
+                return resp.json()['candidates'][0]['content']['parts'][0]['text']
+            return f"Gemini Error {resp.status_code}: {resp.text}"
+
+        # B. OpenAI 兼容 (DeepSeek / OpenRouter)
+        else:
+            client = None
+            if "DeepSeek" in provider and not model_override:
+                client = OpenAI(api_key=st.secrets["deepseek"]["api_key"], base_url=st.secrets["deepseek"]["base_url"])
+                target_model = st.session_state.get("deepseek_model_id", "deepseek-chat")
             else:
-                return f"Gemini 报错 ({response.status_code}): {response.text}"
-
-        # === 分支 B: DeepSeek 官方直连 ===
-        elif "DeepSeek" in provider:
-            client = OpenAI(
-                api_key=st.secrets["deepseek"]["api_key"], 
-                base_url=st.secrets["deepseek"]["base_url"]
-            )
-            # 🔥 动态获取 DeepSeek 模型 (chat 或 reasoner)
-            model_id = st.session_state.get("deepseek_model_id", "deepseek-chat")
+                # 默认走 OpenRouter (或者 override 强制走这里)
+                # 注意：如果是 override (如拆书时强制用 Gemini)，我们需要构建一个临时的 Client 指向 Google 吗？
+                # 不，拆书为了省钱，通常我们用 Gemini 原生。这里为了逻辑简单，如果 override 了且是 Google 模型，走分支 A 逻辑。
+                if model_override and "gemini" in model_override:
+                    # 递归调用自己，但临时骗它是 Gemini
+                    # 这里简化处理：OpenAI 兼容接口也能调 OpenRouter 里的 Google 模型
+                    client = OpenAI(api_key=st.secrets["openrouter"]["api_key"], base_url=st.secrets["openrouter"]["base_url"])
+                else:
+                    if "openrouter" in st.secrets:
+                        client = OpenAI(api_key=st.secrets["openrouter"]["api_key"], base_url=st.secrets["openrouter"]["base_url"])
             
-            messages = [{"role": "system", "content": "你是一位会计专家。"}]
-            for h in history:
-                messages.append({"role": h['role'], "content": h['content']})
-            messages.append({"role": "user", "content": prompt})
+            if not client: return "AI Client 初始化失败"
 
-            response = client.chat.completions.create(model=model_id, messages=messages)
-            return response.choices[0].message.content
-
-        # === 分支 C: OpenRouter ===
-        elif "OpenRouter" in provider:
-            client = OpenAI(
-                api_key=st.secrets["openrouter"]["api_key"], 
-                base_url=st.secrets["openrouter"]["base_url"]
-            )
-            # 🔥 动态获取 OpenRouter 模型
-            model_id = st.session_state.get("openrouter_model_id", "google/gemini-2.0-flash-exp:free")
-            
-            messages = [{"role": "system", "content": "你是一位会计专家。"}]
+            messages = [{"role": "system", "content": "你是一位资深会计讲师。"}]
             for h in history:
                 role = "assistant" if h['role'] == "model" else h['role']
                 messages.append({"role": role, "content": h['content']})
             messages.append({"role": "user", "content": prompt})
 
-            response = client.chat.completions.create(model=model_id, messages=messages)
-            return response.choices[0].message.content
+            resp = client.chat.completions.create(model=target_model, messages=messages, temperature=0.7)
+            return resp.choices[0].message.content
 
     except Exception as e:
-        return f"AI 调用异常: {str(e)}"
+        return f"AI 异常: {e}"
 
-# --- 文档处理函数 ---
-def extract_text_from_pdf(file, start_page=1, end_page=None):
-    text = ""
+# --- 动态获取模型列表 ---
+@st.cache_data(ttl=3600)
+def fetch_google_models(api_key):
     try:
-        with pdfplumber.open(file) as pdf:
-            total = len(pdf.pages)
-            if start_page < 1: start_page = 1
-            if end_page is None or end_page > total: end_page = total
-            for i in range(start_page - 1, end_page):
-                text += pdf.pages[i].extract_text() + "\n"
-        return text
-    except: return ""
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+        data = requests.get(url, timeout=10).json()
+        return [m['name'].replace("models/", "") for m in data.get('models', []) if "generateContent" in m.get('supportedGenerationMethods', [])]
+    except: return []
 
-def extract_text_from_docx(file):
+@st.cache_data(ttl=3600)
+def fetch_openrouter_models(api_key):
     try:
-        doc = docx.Document(file)
-        return "\n".join([para.text for para in doc.paragraphs])
-    except: return ""
+        url = "https://openrouter.ai/api/v1/models"
+        resp = requests.get(url, headers={"Authorization": f"Bearer {api_key}"}, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json().get('data', [])
+            return sorted([
+                {'id': m['id'], 'is_free': (float(m.get('pricing',{}).get('prompt',0))==0) or ':free' in m['id']} 
+                for m in data
+            ], key=lambda x: x['id'])
+        return []
+    except: return []
 
-# --- 数据库操作 ---
-def get_user_profile(user_id):
+# --- 数据库操作 (V3.0 Schema) ---
+def get_user_profile(uid):
     try:
-        res = supabase.table("study_profile").select("*").eq("user_id", user_id).execute()
+        res = supabase.table("study_profile").select("*").eq("user_id", uid).execute()
         if not res.data:
-            supabase.table("study_profile").insert({"user_id": user_id}).execute()
+            supabase.table("study_profile").insert({"user_id": uid}).execute()
             return {}
         return res.data[0]
     except: return {}
 
+def update_settings(uid, settings_dict):
+    try:
+        curr = get_user_profile(uid).get('settings') or {}
+        curr.update(settings_dict)
+        supabase.table("study_profile").update({"settings": curr}).eq("user_id", uid).execute()
+    except: pass
+
 def get_subjects():
     return supabase.table("subjects").select("*").execute().data
 
-def get_chapters(sid, uid):
-    return supabase.table("chapters").select("*").eq("subject_id", sid).eq("user_id", uid).execute().data
+def get_books(sid):
+    # V3 核心：通过 Subject 找 Books
+    return supabase.table("books").select("*").eq("subject_id", sid).eq("user_id", user_id).execute().data
 
-def create_chapter(sid, title, uid):
-    supabase.table("chapters").insert({"subject_id": sid, "title": title, "user_id": uid}).execute()
+def get_chapters(book_id):
+    # V3 核心：通过 Book 找 Chapters (修复之前的报错)
+    return supabase.table("chapters").select("*").eq("book_id", book_id).order("start_page", desc=False).execute().data
 
-def save_material_track_a(cid, content, title, uid):
-    supabase.table("materials").insert({"chapter_id": cid, "content": content, "source_type": "textbook", "title": title, "user_id": uid}).execute()
+def save_material_v3(chapter_id, content, uid):
+    supabase.table("materials").insert({
+        "chapter_id": chapter_id,
+        "content": content,
+        "user_id": uid
+    }).execute()
 
-def save_questions_batch(q_list, cid, uid):
-    data = [{"chapter_id": cid, "user_id": uid, "type": "single", "content": q['question'], "options": q['options'], "correct_answer": q['answer'], "explanation": q.get('explanation', ''), "origin": "extraction"} for q in q_list]
+def save_questions_v3(q_list, chapter_id, uid, origin="ai"):
+    data = [{
+        "chapter_id": chapter_id,
+        "user_id": uid,
+        "content": q['question'], # 兼容不同 key
+        "options": q['options'],
+        "correct_answer": q['answer'],
+        "explanation": q.get('explanation', ''),
+        "type": "multi" if len(q['answer']) > 1 else "single",
+        "origin": origin
+    } for q in q_list]
     supabase.table("question_bank").insert(data).execute()
 
-# =========================================================
-# 3. 导航与仪表盘
-# =========================================================
-if 'user_id' not in st.session_state:
-    st.session_state.user_id = "test_user_001" # 生产环境请接 Auth
+# --- 文件解析 ---
+def extract_pdf(file, start=1, end=None):
+    text = ""
+    try:
+        with pdfplumber.open(file) as pdf:
+            total = len(pdf.pages)
+            if end is None or end > total: end = total
+            for i in range(start-1, end):
+                text += pdf.pages[i].extract_text() + "\n"
+        return text
+    except: return ""
 
-user_id = st.session_state.user_id
+def extract_docx(file):
+    try:
+        doc = docx.Document(file)
+        return "\n".join([p.text for p in doc.paragraphs])
+    except: return ""
+
+# --- 自动保存回调 ---
+def save_ai_pref():
+    p = st.session_state.get('ai_provider_select')
+    m = None
+    if "OpenRouter" in str(p): m = st.session_state.get('or_model_select')
+    elif "DeepSeek" in str(p): m = st.session_state.get('ds_model_select')
+    elif "Gemini" in str(p): m = st.session_state.get('gl_model_select')
+    
+    if p: update_settings(user_id, {"last_provider": p, "last_used_model": m})
+
+# ==============================================================================
+# 4. 侧边栏与导航
+# ==============================================================================
 profile = get_user_profile(user_id)
+settings = profile.get('settings') or {}
 
 with st.sidebar:
     st.title("🥝 备考中心")
     
-# --- 1. AI 大脑设置 (最终完整版：全动态+全记忆) ---
+    # --- AI 设置 (记忆版) ---
+    provs = ["Gemini (官方直连)", "DeepSeek (官方直连)", "OpenRouter (聚合平台)"]
+    saved_p = settings.get('last_provider')
+    idx_p = 0
+    if saved_p:
+        for i, x in enumerate(provs):
+            if saved_p in x: idx_p = i; break
+            
+    prov = st.selectbox("🧠 AI 大脑", provs, index=idx_p, key="ai_provider_select", on_change=save_ai_pref)
+    st.session_state.selected_provider = prov
     
-    # A. 准备服务商列表
-    provider_options = ["Gemini (官方直连)", "DeepSeek (官方直连)", "OpenRouter (聚合平台)"]
+    saved_m = settings.get('last_used_model')
     
-    # B. 读取数据库里的旧设置 (用于记忆回显)
-    # 确保 profile 和 user_settings 已定义
-    user_settings = profile.get('settings') or {}
-    saved_provider = user_settings.get('last_provider')
-    saved_model = user_settings.get('last_used_model')
-    
-    # C. 计算服务商的默认 Index (记忆功能)
-    provider_index = 0
-    # 模糊匹配，防止因为选项文字微调导致匹配失败
-    for i, opt in enumerate(provider_options):
-        if saved_provider and saved_provider.split(" ")[0] in opt:
-            provider_index = i
-            break
-    
-    # D. 渲染服务商选择框 (绑定 on_change=save_ai_settings)
-    ai_provider = st.selectbox(
-        "🧠 AI 大脑", 
-        provider_options,
-        index=provider_index,
-        key="ai_provider_select", # 绑定 Key 用于回调
-        on_change=save_ai_settings # 🔥 切换服务商时自动保存
-    )
-    st.session_state.selected_provider = ai_provider
-    
-    target_model_id = None
-    
-    # === 分支 A: Google Gemini ===
-    if "Gemini" in ai_provider:
-        g_key = st.secrets["GOOGLE_API_KEY"]
+    if "Gemini" in prov:
+        opts = fetch_google_models(st.secrets["GOOGLE_API_KEY"]) or ["gemini-1.5-flash"]
+        idx_m = opts.index(saved_m) if saved_m in opts else 0
+        st.session_state.google_model_id = st.selectbox("🔌 模型", opts, index=idx_m, key="gl_model_select", on_change=save_ai_pref)
         
-        # 1. 联网获取
-        with st.spinner("同步 Google 模型库..."):
-            g_models = fetch_google_models(g_key)
+    elif "DeepSeek" in prov:
+        opts = ["deepseek-chat", "deepseek-reasoner"]
+        idx_m = opts.index(saved_m) if saved_m in opts else 0
+        st.session_state.deepseek_model_id = st.selectbox("🔌 模型", opts, index=idx_m, key="ds_model_select", on_change=save_ai_pref)
         
-        # 2. 保底列表
-        g_backups = ["gemini-2.0-flash-exp", "gemini-1.5-flash", "gemini-1.5-pro"]
-        final_g_opts = g_models if g_models else g_backups
-        
-        # 3. 计算记忆 Index
-        g_idx = 0
-        if saved_model in final_g_opts: 
-            g_idx = final_g_opts.index(saved_model)
-        
-        # 4. 渲染选择框
-        target_model_id = st.selectbox(
-            "🔌 选择 Gemini 版本", 
-            final_g_opts,
-            index=g_idx,
-            key="google_model_select",
-            on_change=save_ai_settings
-        )
-        st.session_state.google_model_id = target_model_id
-
-    # === 分支 B: DeepSeek ===
-    elif "DeepSeek" in ai_provider:
-        # DeepSeek 官方目前主要就是这两个
-        d_opts = ["deepseek-chat", "deepseek-reasoner"]
-        
-        # 计算记忆 Index
-        d_idx = 0
-        if saved_model in d_opts: 
-            d_idx = d_opts.index(saved_model)
-        
-        target_model_id = st.selectbox(
-            "🔌 选择 DeepSeek 版本", 
-            d_opts,
-            index=d_idx,
-            key="deepseek_model_select",
-            on_change=save_ai_settings,
-            help="Chat (V3) 速度快，Reasoner (R1) 逻辑强"
-        )
-        st.session_state.deepseek_model_id = target_model_id
-
-    # === 分支 C: OpenRouter ===
-    elif "OpenRouter" in ai_provider:
-        or_key = st.secrets.get("openrouter", {}).get("api_key")
-        
-        # 1. 联网获取
-        all_models = fetch_openrouter_models(or_key)
-        
-        if not all_models:
-            st.caption("⚠️ 离线模式 (无法连接 OpenRouter)")
-            final_ids = ["google/gemini-2.0-flash-exp:free", "deepseek/deepseek-r1:free"]
+    elif "OpenRouter" in prov:
+        all_ms = fetch_openrouter_models(st.secrets["openrouter"]["api_key"])
+        if not all_ms:
+            st.warning("OpenRouter 连接失败")
+            final_ids = ["google/gemini-2.0-flash-exp:free"]
         else:
-            # 2. 筛选逻辑
-            filter_type = st.radio("筛选", ["🤑 免费", "🌎 全部"], horizontal=True)
+            ft = st.radio("筛选", ["🤑 免费", "🌎 全部"], horizontal=True)
+            subset = [m for m in all_ms if m['is_free']] if "免费" in ft else all_ms
+            final_ids = [m['id'] for m in subset]
+            if not final_ids: final_ids = [m['id'] for m in all_ms]
             
-            if "免费" in filter_type:
-                filtered_models = [m for m in all_models if m['is_free']]
-            else:
-                filtered_models = all_models
-            
-            final_ids = [m['id'] for m in filtered_models]
-            if not final_ids: final_ids = [m['id'] for m in all_models]
-
-        # 3. 计算记忆 Index
-        or_idx = 0
-        if saved_model in final_ids:
-            or_idx = final_ids.index(saved_model)
-        
-        # 4. 渲染选择框
-        target_model_id = st.selectbox(
-            "🔌 选择 OpenRouter 模型",
-            final_ids,
-            index=or_idx,
-            key="openrouter_model_select",
-            on_change=save_ai_settings
-        )
-        st.session_state.openrouter_model_id = target_model_id
+        idx_m = final_ids.index(saved_m) if saved_m in final_ids else 0
+        st.session_state.openrouter_model_id = st.selectbox("🔌 模型", final_ids, index=idx_m, key="or_model_select", on_change=save_ai_pref)
 
     st.divider()
-
-    # --- 2. 导航菜单 ---
-    menu = st.radio(
-        "导航", 
-        ["🏠 仪表盘", "📚 资料库 (双轨录入)", "📝 章节特训 (刷题)", "⚔️ 全真模考", "📊 弱项分析", "❌ 错题本", "⚙️ 设置中心"], 
-        label_visibility="collapsed"
-    )
     
-    st.divider()
+    # --- 导航 ---
+    menu = st.radio("功能导航", ["🏠 仪表盘", "📚 智能资料库 (V3)", "📝 章节特训", "⚔️ 全真模考", "📊 弱项分析", "❌ 错题本", "⚙️ 设置中心"], label_visibility="collapsed")
     
-    # --- 3. 倒计时 (跨年修正版) ---
+    # --- 倒计时 ---
     if profile.get('exam_date'):
         try:
-            target_date = datetime.datetime.strptime(profile['exam_date'], '%Y-%m-%d').date()
+            target = datetime.datetime.strptime(profile['exam_date'], '%Y-%m-%d').date()
             today = datetime.date.today()
-            
-            if target_date < today:
-                next_year = today.year + 1
-                target_date = datetime.date(next_year, 9, 6)
-                days = (target_date - today).days
-                st.metric("⏳ 备战明年", f"{days} 天", delta=f"{next_year}赛季", delta_color="normal")
+            if target < today:
+                next_y = today.year + 1
+                target = datetime.date(next_y, 9, 6)
+                st.metric("⏳ 备战明年", f"{(target-today).days} 天", delta=f"{next_y}赛季")
             else:
-                days = (target_date - today).days
-                if days <= 30:
-                    st.metric("⏳ 距离考试", f"{days} 天", delta="冲刺阶段", delta_color="inverse")
-                else:
-                    st.metric("⏳ 距离考试", f"{days} 天")
-        except: 
-            pass
+                days = (target - today).days
+                st.metric("⏳ 距离考试", f"{days} 天", delta="冲刺" if days<30 else "稳住")
+        except: pass
+
+# ==============================================================================
+# 5. 各页面逻辑 (V3 架构适配)
+# ==============================================================================
 
 # === 🏠 仪表盘 ===
 if menu == "🏠 仪表盘":
-    # 1. 欢迎语与智能倒计时
-    exam_date_str = profile.get('exam_date')
-    today = datetime.date.today()
-    days_left = 0
-    is_next_year = False
-    
-    if exam_date_str:
-        target_date = datetime.datetime.strptime(exam_date_str, '%Y-%m-%d').date()
-        
-        # 如果日期已过 (比如现在是12月，目标是9月)
-        if target_date < today:
-            # 自动切换到明年9月 (暂定)
-            target_date = datetime.date(today.year + 1, 9, 6)
-            is_next_year = True
-            
-        days_left = (target_date - today).days
-    
-    # 动态文案
-    if is_next_year:
-        title_html = f"### 🍂 2025考季已过，备战 <span style='color:#00C090'>2026</span>！还剩 <span style='color:#ff4b4b; font-size:1.2em'>{days_left}</span> 天"
-        msg = "种一棵树最好的时间是十年前，其次是现在。明年必过！"
-    else:
-        title_html = f"### 🌞 早安，距离上岸还有 <span style='color:#ff4b4b; font-size:1.2em'>{days_left}</span> 天"
-        msg = "现在的从容，就是考场上的噩梦。" if days_left > 100 else "稳住！你背的每一个分录，都是救命稻草！"
-
-    st.markdown(title_html, unsafe_allow_html=True)
-    st.info(f"👨‍🏫 **班主任说：** {msg}")
-
-    # 2. 核心数据 Bento Grid (Bootstrap 风格)
+    # (复用之前的逻辑，简化展示)
+    st.markdown(f"### 🌞 欢迎回来，{user_id}")
     c1, c2, c3 = st.columns(3)
+    with c1: st.markdown(f"<div class='css-card'><div class='stat-title'>累计刷题</div><div class='stat-value'>{profile.get('total_questions_done',0)}</div><i class='bi bi-pencil-fill stat-icon'></i></div>", unsafe_allow_html=True)
+    with c2: st.markdown(f"<div class='css-card'><div class='stat-title'>连续打卡</div><div class='stat-value'>{profile.get('study_streak',0)}</div><i class='bi bi-fire stat-icon'></i></div>", unsafe_allow_html=True)
+    with c3: st.markdown(f"<div class='css-card'><div class='stat-title'>待复习错题</div><div class='stat-value'>--</div><i class='bi bi-bookmark-x-fill stat-icon'></i></div>", unsafe_allow_html=True)
+
+# === 📚 智能资料库 (V3 核心：Subject -> Book -> Chapter) ===
+elif menu == "📚 智能资料库 (V3)":
+    st.title("📚 智能书架 & 拆书助手")
+    
+    subjects = get_subjects()
+    if not subjects: st.error("请先在数据库初始化 Subjects 表"); st.stop()
+    
+    # 1. 选科目
+    c1, c2 = st.columns(2)
     with c1:
-        st.markdown(f"""
-        <div class="card">
-            <i class="bi bi-collection-fill stat-icon"></i>
-            <div class="stat-title">累计刷题</div>
-            <div class="stat-value">{profile.get('total_questions_done', 0)}</div>
-            <div style="color:#00C090; font-size:0.8rem; margin-top:5px;">
-                <i class="bi bi-arrow-up-circle"></i> 持续进步中
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
+        s_name = st.selectbox("1. 选择科目", [s['name'] for s in subjects])
+        sid = next(s['id'] for s in subjects if s['name'] == s_name)
+    
+    # 2. 选书 (关联 Subject)
     with c2:
-        # 正确率计算 (同前)
-        acc = "0%"
-        # ... (保留你之前的正确率计算逻辑) ...
-        
-        st.markdown(f"""
-        <div class="card">
-            <i class="bi bi-bullseye stat-icon"></i>
-            <div class="stat-title">正确率</div>
-            <div class="stat-value">{acc}</div>
-            <div class="progress" style="height: 6px; margin-top:10px; background-color:#eee; border-radius:3px;">
-                <div style="width: {acc}; height: 100%; background-color: #00C090; border-radius: 3px;"></div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        books = get_books(sid)
+        b_opts = ["➕ 上传新书 (PDF)..."] + [b['title'] for b in books]
+        sel_book = st.selectbox("2. 选择书籍", b_opts)
+    
+    # A. 上传新书逻辑
+    if "上传新书" in sel_book:
+        with st.container():
+            st.markdown("#### 📤 智能拆书台")
+            st.caption("AI 自动分析 PDF 目录，将整书拆分为章节，极大节省 Token。")
+            up_file = st.file_uploader("上传 PDF", type="pdf")
+            
+            if up_file:
+                # 读取总页数
+                try:
+                    with pdfplumber.open(up_file) as pdf: total_pages = len(pdf.pages)
+                    st.success(f"文件解析成功，共 {total_pages} 页")
+                    
+                    if st.button("🚀 开始 AI 目录分析"):
+                        # 1. 创建 Book
+                        book_data = {"user_id": user_id, "subject_id": sid, "title": up_file.name.replace(".pdf",""), "total_pages": total_pages}
+                        new_book = supabase.table("books").insert(book_data).execute().data[0]
+                        bid = new_book['id']
+                        
+                        # 2. 读取目录页 (前20页)
+                        with st.spinner("AI 正在阅读目录..."):
+                            toc_text = ""
+                            with pdfplumber.open(up_file) as pdf:
+                                for i in range(min(20, total_pages)):
+                                    toc_text += pdf.pages[i].extract_text() + "\n"
+                            
+                            # 3. AI 规划
+                            p = f"分析目录结构。总页数{total_pages}。返回JSON列表:[{{'title':'第一章 总论','start':5,'end':20}}]。文本：{toc_text[:8000]}"
+                            # 强制用 Flash 省钱
+                            res = call_ai_universal(p, model_override="google/gemini-1.5-flash")
+                            
+                            if res:
+                                try:
+                                    chaps = json.loads(res.replace("```json","").replace("```","").strip())
+                                    # 存入 Chapters
+                                    for c in chaps:
+                                        supabase.table("chapters").insert({
+                                            "book_id": bid, "title": c['title'], "start_page": c['start'], "end_page": c['end'], "user_id": user_id
+                                        }).execute()
+                                    st.success("拆分完成！请在上方下拉框选择这本书。")
+                                    time.sleep(1)
+                                    st.rerun()
+                                except: st.error("AI 目录解析失败，请重试或手动创建")
+                except: st.error("文件无效")
 
-    with c3:
-        st.markdown(f"""
-        <div class="card">
-            <i class="bi bi-fire stat-icon" style="color: #FF7043;"></i>
-            <div class="stat-title">连续打卡</div>
-            <div class="stat-value">{profile.get('study_streak', 1)} <span style="font-size:1rem">天</span></div>
-            <div style="color:#888; font-size:0.8rem; margin-top:5px;">
-                <i class="bi bi-check-circle-fill" style="color:#00C090"></i> 今日已打卡
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+    # B. 书籍管理 (章节列表)
+    elif books:
+        bid = next(b['id'] for b in books if b['title'] == sel_book)
+        chapters = get_chapters(bid)
+        
+        st.divider()
+        st.write(f"📖 **{sel_book}** 目录结构")
+        
+        if not chapters:
+            st.info("暂无章节，可能是解析失败。")
+        else:
+            for chap in chapters:
+                with st.expander(f"📑 {chap['title']} (P{chap['start_page']}-{chap['end_page']})"):
+                    # 检查是否有内容
+                    has_mat = supabase.table("materials").select("id", count="exact").eq("chapter_id", chap['id']).execute().count
+                    
+                    c_info, c_act = st.columns([3, 1])
+                    with c_info:
+                        if has_mat: st.success("✅ 内容已入库")
+                        else: st.warning("⚪ 内容未提取")
+                        
+                    with c_act:
+                        # 提取入库按钮
+                        if st.button("📥 提取内容", key=f"imp_{chap['id']}"):
+                            st.info("请重新拖入对应的 PDF 文件以开始提取...")
+                            # 这里简化：实际应弹出一个专用上传框或使用缓存的文件
+                            # 为演示，我们在下方提供一个临时上传框
+                            
+                    # 临时上传框 (为了方便提取)
+                    temp_up = st.file_uploader(f"上传 PDF 以提取 {chap['title']}", type="pdf", key=f"up_{chap['id']}")
+                    if temp_up:
+                        with st.spinner("切片提取中..."):
+                            txt = extract_pdf(temp_up, chap['start_page'], chap['end_page'])
+                            if txt:
+                                save_material_v3(chap['id'], txt, user_id)
+                                st.success("入库成功！")
+                                st.rerun()
+
+                    st.divider()
+                    # 生成讲义/习题入口
+                    if has_mat:
+                        c_gen1, c_gen2 = st.columns(2)
+                        if c_gen1.button("🎓 生成 AI 讲义", key=f"les_{chap['id']}"):
+                            # 讲义生成逻辑...
+                            st.toast("功能开发中...")
+                        if c_gen2.button("🧠 生成 5 道题", key=f"qz_{chap['id']}"):
+                            # 题目生成逻辑
+                            mat = supabase.table("materials").select("content").eq("chapter_id", chap['id']).limit(1).execute().data[0]
+                            with st.spinner("AI 出题中..."):
+                                p = f"基于内容出5道单选。JSON格式。内容：{mat['content'][:5000]}"
+                                r = call_ai_universal(p)
+                                if r:
+                                    try:
+                                        d = json.loads(r.replace("```json","").replace("```","").strip())
+                                        # 适配 V3 字段
+                                        fmt = [{"question":x['content'], "options":x['options'], "answer":x['correct_answer'], "explanation":x['explanation']} for x in d]
+                                        save_questions_v3(fmt, chap['id'], user_id, origin="ai_gen")
+                                        st.success("题目已存入题库！")
+                                    except: st.error("生成失败")
+
+# === 📝 章节特训 (适配 V3: Subject->Book->Chapter) ===
+elif menu == "📝 章节特训":
+    st.title("📝 章节突破")
+    
+    # 1. JS 计时器
+    if st.session_state.get('quiz_active'):
+        if 'js_start' not in st.session_state: st.session_state.js_start = int(time.time()*1000)
+        components.html(f"""<div style='position:fixed;top:60px;right:20px;z-index:9999;background:#00C090;color:white;padding:5px 15px;border-radius:20px;font-family:monospace;font-weight:bold;box-shadow:0 4px 10px rgba(0,0,0,0.2)'>⏱️ <span id='t'>00:00</span></div><script>setInterval(()=>{{var d=Math.floor((Date.now()-{st.session_state.js_start})/1000);document.getElementById('t').innerText=Math.floor(d/60).toString().padStart(2,'0')+':'+(d%60).toString().padStart(2,'0')}},1000)</script>""", height=0)
+
+    # 2. 选区 (V3 级联)
+    if not st.session_state.get('quiz_active'):
+        subjects = get_subjects()
+        if subjects:
+            c1, c2, c3 = st.columns(3)
+            with c1: 
+                s = st.selectbox("科目", [x['name'] for x in subjects])
+                sid = next(x['id'] for x in subjects if x['name']==s)
+            with c2:
+                books = get_books(sid)
+                if not books: st.warning("该科目无书"); st.stop()
+                b = st.selectbox("书籍", [x['title'] for x in books])
+                bid = next(x['id'] for x in books if x['title']==b)
+            with c3:
+                chaps = get_chapters(bid)
+                if not chaps: st.warning("本书无章节"); st.stop()
+                c = st.selectbox("章节", [x['title'] for x in chaps])
+                cid = next(x['id'] for x in chaps if x['title']==c)
+                
+            # 进度条
+            try:
+                # V3 进度逻辑
+                total = supabase.table("question_bank").select("id", count="exact").eq("chapter_id", cid).execute().count
+                # 简单估算：查 user_answers 关联
+                # 严谨做法需要 view 或 join，这里简化
+                st.caption(f"📚 题库库存: {total} 题")
+            except: pass
+            
+            if st.button("🚀 开始刷题", type="primary", use_container_width=True):
+                qs = supabase.table("question_bank").select("*").eq("chapter_id", cid).limit(20).execute().data
+                if qs:
+                    random.shuffle(qs)
+                    st.session_state.quiz_data = qs[:10]
+                    st.session_state.q_idx = 0
+                    st.session_state.quiz_active = True
+                    st.session_state.js_start = int(time.time()*1000)
+                    st.rerun()
+                else: st.error("本章无题，请去资料库生成。")
+
+    # 3. 做题 (保持不变，复用逻辑)
+    if st.session_state.get('quiz_active'):
+        idx = st.session_state.q_idx
+        q = st.session_state.quiz_data[idx]
+        total = len(st.session_state.quiz_data)
+        
+        st.progress((idx+1)/total)
+        st.markdown(f"<div class='css-card'><h4>Q{idx+1}: {q['content']}</h4></div>", unsafe_allow_html=True)
+        
+        # 选项渲染 (支持多选)
+        user_val = ""
+        is_multi = q.get('type') == 'multi' or len(q['correct_answer']) > 1
+        
+        if is_multi:
+            st.caption("【多选题】")
+            opts = []
+            for o in q['options']:
+                if st.checkbox(o, key=f"m_{idx}_{o}"): opts.append(o[0])
+            user_val = "".join(sorted(opts))
+        else:
+            sel = st.radio("单选", q['options'], key=f"s_{idx}", label_visibility="collapsed")
+            user_val = sel[0] if sel else ""
+            
+        sub_key = f"sub_{idx}"
+        if sub_key not in st.session_state: st.session_state[sub_key] = False
+        
+        if st.button("✅ 提交") and not st.session_state[sub_key]:
+            st.session_state[sub_key] = True
+            
+        if st.session_state[sub_key]:
+            if user_val == q['correct_answer']: 
+                st.markdown("<div class='success-box'>🎉 正确</div>", unsafe_allow_html=True)
+                # V3: 更新 user_answers
+                supabase.table("user_answers").insert({
+                    "user_id": user_id, "question_id": q['id'], "user_response": user_val, "is_correct": True
+                }).execute()
+            else:
+                st.error(f"❌ 错误。答案: {q['correct_answer']}")
+                supabase.table("user_answers").insert({
+                    "user_id": user_id, "question_id": q['id'], "user_response": user_val, "is_correct": False
+                }).execute()
+                
+            st.info(q['explanation'])
+            
+            # 翻页
+            if st.button("➡️ 下一题"):
+                if idx < total-1: 
+                    st.session_state.q_idx += 1
+                    st.rerun()
+                else: 
+                    st.success("完成")
+                    if st.button("退出"): 
+                        st.session_state.quiz_active = False
+                        st.rerun()
+
+# === ❌ 错题本 (V3: 关联查询) ===
+elif menu == "❌ 错题本":
+    st.title("❌ 错题集")
+    # 联表查询 V3: user_answers -> question_bank
+    errs = supabase.table("user_answers").select("*, question_bank(*)").eq("user_id", user_id).eq("is_correct", False).order("created_at", desc=True).execute().data
+    
+    unique_q = {}
+    for e in errs:
+        if e['question_id'] not in unique_q: unique_q[e['question_id']] = e
+        
+    if not unique_q: st.success("无错题")
+    else:
+        for qid, e in unique_q.items():
+            q = e['question_bank']
+            if not q: continue
+            with st.expander(f"🔴 {q['content'][:30]}..."):
+                st.markdown(f"**题目**：{q['content']}")
+                for o in q['options']:
+                    st.markdown(f"<div class='option-item'>{o}</div>", unsafe_allow_html=True)
+                st.error(f"你的: {e['user_response']} | 正确: {q['correct_answer']}")
+                st.info(q['explanation'])
+                
+                # AI 举例 (复用逻辑)
+                if st.button("🤔 AI 举例", key=f"ex_{qid}"):
+                    res = call_ai_universal(f"举例解释：{q['content']} 答案{q['correct_answer']}")
+                    st.write(res)
+                
+                if st.button("✅ 移除", key=f"rm_{qid}"):
+                    supabase.table("user_answers").update({"is_correct": True}).eq("question_id", qid).execute()
+                    st.rerun()
+
 
 # === ⚙️ 设置中心 ===
 elif menu == "⚙️ 设置中心":
@@ -1253,4 +1190,5 @@ elif menu == "❌ 错题本":
                                         final_history = temp_history + [{"role": "model", "content": ai_reply}]
                                         supabase.table("user_answers").update({"ai_chat_history": final_history}).eq("id", rec_id).execute()
                                         st.rerun()
+
 
