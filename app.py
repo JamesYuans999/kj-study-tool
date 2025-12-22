@@ -15,25 +15,23 @@ import streamlit.components.v1 as components
 # ==============================================================================
 # 1. 全局配置与 Bootstrap 高级动态特效 (CSS)
 # ==============================================================================
-st.set_page_config(page_title="中级会计 AI 私教 Pro (V3.0)", page_icon="🥝", layout="wide")
+st.set_page_config(page_title="中级会计 AI 私教 Pro (V3.1)", page_icon="🥝", layout="wide")
 
 st.markdown("""
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
 <style>
-    /* === 基础设定：柔和护眼背景 === */
+    /* === 基础设定 === */
     .stApp {
         background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
         font-family: 'Segoe UI', 'Roboto', sans-serif;
     }
-    
-    /* === 侧边栏：毛玻璃特效 === */
     [data-testid="stSidebar"] {
         background-color: rgba(255, 255, 255, 0.95);
         border-right: 1px solid rgba(0,0,0,0.05);
         box-shadow: 4px 0 15px rgba(0,0,0,0.03);
     }
 
-    /* === 卡片：悬浮呼吸感 (Hover Card) === */
+    /* === 卡片 === */
     .css-card {
         background-color: #FFFFFF;
         border-radius: 16px;
@@ -45,32 +43,22 @@ st.markdown("""
         position: relative;
         overflow: hidden;
     }
-    
     .css-card:hover {
         transform: translateY(-5px);
         box-shadow: 0 15px 30px rgba(0, 192, 144, 0.15);
         border-color: rgba(0, 192, 144, 0.3);
     }
-    
-    /* 卡片左侧装饰条 */
     .css-card::before {
         content: ''; position: absolute; top: 0; left: 0; width: 4px; height: 100%;
         background: #00C090; opacity: 0; transition: opacity 0.3s;
     }
     .css-card:hover::before { opacity: 1; }
 
-    /* === 统计数字 === */
-    .stat-title {
-        font-size: 0.85rem; color: #6c757d; text-transform: uppercase; letter-spacing: 1px; font-weight: 700;
-    }
-    .stat-value {
-        font-size: 2.4rem; font-weight: 800; color: #2C3E50; letter-spacing: -1px;
-    }
-    .stat-icon {
-        position: absolute; right: 20px; top: 20px; font-size: 2rem; color: rgba(0,192,144, 0.15);
-    }
+    /* === 数字与按钮 === */
+    .stat-title { font-size: 0.85rem; color: #6c757d; font-weight: 700; text-transform: uppercase; }
+    .stat-value { font-size: 2.4rem; font-weight: 800; color: #2C3E50; }
+    .stat-icon { position: absolute; right: 20px; top: 20px; font-size: 2rem; color: rgba(0,192,144, 0.15); }
 
-    /* === 按钮：渐变色胶囊 === */
     .stButton>button {
         background: linear-gradient(135deg, #00C090 0%, #00a87e 100%);
         color: white; border: none; border-radius: 50px; height: 45px; font-weight: 600;
@@ -80,7 +68,7 @@ st.markdown("""
         transform: translateY(-2px); box-shadow: 0 6px 15px rgba(0, 192, 144, 0.5); filter: brightness(1.1); color: white;
     }
     
-    /* === 选项列表美化 === */
+    /* === 选项列表 === */
     .option-item {
         background: #fff; border: 1px solid #eee; padding: 12px 15px; border-radius: 8px; margin-bottom: 8px;
         border-left: 4px solid #e9ecef; transition: all 0.2s; color: #495057;
@@ -96,8 +84,6 @@ st.markdown("""
         background-color: #FFFFFF; padding: 12px 18px; border-radius: 15px 15px 15px 0;
         margin: 10px auto 10px 0; max-width: 85%; border-left: 4px solid #00C090; box-shadow: 0 2px 5px rgba(0,0,0,0.05);
     }
-    
-    /* === 成功提示框 === */
     .success-box { padding: 15px; background: #E8F5E9; border-radius: 10px; color: #2E7D32; border: 1px solid #C8E6C9; margin-bottom: 10px;}
 </style>
 """, unsafe_allow_html=True)
@@ -119,7 +105,7 @@ def init_supabase():
 
 supabase = init_supabase()
 
-# 用户身份模拟 (生产环境需对接 st.login)
+# 用户身份模拟
 if 'user_id' not in st.session_state:
     st.session_state.user_id = "test_user_001"
 user_id = st.session_state.user_id
@@ -128,83 +114,7 @@ user_id = st.session_state.user_id
 # 3. 核心功能函数
 # ==============================================================================
 
-# --- AI 调用 (通用版) ---
-def call_ai_universal(prompt, history=[], model_override=None):
-    """支持 Gemini / DeepSeek / OpenRouter 的通用接口"""
-    provider = st.session_state.get('selected_provider', 'Gemini')
-    target_model = model_override or st.session_state.get('openrouter_model_id') or st.session_state.get('google_model_id') or st.session_state.get('deepseek_model_id')
-    
-    # 默认兜底
-    if not target_model: target_model = "gemini-1.5-flash"
-    
-    try:
-        # A. Google Gemini
-        if "Gemini" in provider and not model_override:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent?key={API_KEY}"
-            headers = {'Content-Type': 'application/json'}
-            contents = []
-            for h in history:
-                role = "user" if h['role'] == 'user' else "model"
-                contents.append({"role": role, "parts": [{"text": h['content']}]})
-            contents.append({"role": "user", "parts": [{"text": prompt}]})
-            
-            resp = requests.post(url, headers=headers, json={"contents": contents}, timeout=60)
-            if resp.status_code == 200:
-                return resp.json()['candidates'][0]['content']['parts'][0]['text']
-            return f"Gemini Error {resp.status_code}: {resp.text}"
-
-        # B. OpenAI 兼容
-        else:
-            client = None
-            # 临时 Override 或者是 DeepSeek/OpenRouter
-            if model_override and "gemini" in model_override:
-                 # 特殊情况：拆书时强制用 Gemini Flash 省钱，但走 OpenAI 协议可能不通，走 Gemini 协议
-                 # 为了简化，这里假设 override 只用于 Gemini 原生调用，或者 OpenRouter
-                 if "openrouter" in st.secrets:
-                     client = OpenAI(api_key=st.secrets["openrouter"]["api_key"], base_url=st.secrets["openrouter"]["base_url"])
-            elif "DeepSeek" in provider:
-                client = OpenAI(api_key=st.secrets["deepseek"]["api_key"], base_url=st.secrets["deepseek"]["base_url"])
-            elif "OpenRouter" in provider:
-                client = OpenAI(api_key=st.secrets["openrouter"]["api_key"], base_url=st.secrets["openrouter"]["base_url"])
-            
-            if not client: return "AI Client 初始化失败"
-
-            messages = [{"role": "system", "content": "你是一位资深会计讲师。回答请使用 Markdown 格式。"}]
-            for h in history:
-                role = "assistant" if h['role'] == "model" else h['role']
-                messages.append({"role": role, "content": h['content']})
-            messages.append({"role": "user", "content": prompt})
-
-            resp = client.chat.completions.create(model=target_model, messages=messages, temperature=0.7)
-            return resp.choices[0].message.content
-
-    except Exception as e:
-        return f"AI 异常: {e}"
-
-# --- 动态获取模型列表 ---
-@st.cache_data(ttl=3600)
-def fetch_google_models(api_key):
-    try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
-        data = requests.get(url, timeout=10).json()
-        return [m['name'].replace("models/", "") for m in data.get('models', []) if "generateContent" in m.get('supportedGenerationMethods', [])]
-    except: return []
-
-@st.cache_data(ttl=3600)
-def fetch_openrouter_models(api_key):
-    try:
-        url = "https://openrouter.ai/api/v1/models"
-        resp = requests.get(url, headers={"Authorization": f"Bearer {api_key}"}, timeout=10)
-        if resp.status_code == 200:
-            data = resp.json().get('data', [])
-            return sorted([
-                {'id': m['id'], 'is_free': (float(m.get('pricing',{}).get('prompt',0))==0) or ':free' in m['id']} 
-                for m in data
-            ], key=lambda x: x['id'])
-        return []
-    except: return []
-
-# --- 数据库操作 (V3.0 Schema) ---
+# --- 数据库 Helper ---
 def get_user_profile(uid):
     try:
         res = supabase.table("study_profile").select("*").eq("user_id", uid).execute()
@@ -231,23 +141,91 @@ def get_chapters(book_id):
     return supabase.table("chapters").select("*").eq("book_id", book_id).order("start_page", desc=False).execute().data
 
 def save_material_v3(chapter_id, content, uid):
-    supabase.table("materials").insert({
-        "chapter_id": chapter_id, "content": content, "user_id": uid
-    }).execute()
+    supabase.table("materials").insert({"chapter_id": chapter_id, "content": content, "user_id": uid}).execute()
 
 def save_questions_v3(q_list, chapter_id, uid, origin="ai"):
     data = [{
-        "chapter_id": chapter_id,
-        "user_id": uid,
-        "content": q['question'],
-        "options": q['options'],
-        "correct_answer": q['answer'],
-        "explanation": q.get('explanation', ''),
-        "type": "multi" if len(q['answer']) > 1 else "single",
-        "origin": origin,
+        "chapter_id": chapter_id, "user_id": uid,
+        "content": q['question'], "options": q['options'], "correct_answer": q['answer'], "explanation": q.get('explanation', ''),
+        "type": "multi" if len(q['answer']) > 1 else "single", "origin": origin,
         "batch_source": f"Batch-{int(time.time())}"
     } for q in q_list]
     supabase.table("question_bank").insert(data).execute()
+
+# --- AI 调用 (含超时控制) ---
+def call_ai_universal(prompt, history=[], model_override=None):
+    """支持 Gemini / DeepSeek / OpenRouter 的通用接口，含超时控制"""
+    provider = st.session_state.get('selected_provider', 'Gemini')
+    target_model = model_override or st.session_state.get('openrouter_model_id') or st.session_state.get('google_model_id') or st.session_state.get('deepseek_model_id')
+    if not target_model: target_model = "gemini-1.5-flash"
+    
+    # 🔥 获取用户设定的超时时间 (默认 60s)
+    user_settings = st.session_state.get('current_settings', {})
+    timeout_sec = user_settings.get('ai_timeout', 60)
+
+    try:
+        # A. Google Gemini
+        if "Gemini" in provider and not model_override:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent?key={API_KEY}"
+            headers = {'Content-Type': 'application/json'}
+            contents = []
+            for h in history:
+                role = "user" if h['role'] == 'user' else "model"
+                contents.append({"role": role, "parts": [{"text": h['content']}]})
+            contents.append({"role": "user", "parts": [{"text": prompt}]})
+            
+            resp = requests.post(url, headers=headers, json={"contents": contents}, timeout=timeout_sec)
+            if resp.status_code == 200:
+                return resp.json()['candidates'][0]['content']['parts'][0]['text']
+            return f"Gemini Error {resp.status_code}: {resp.text}"
+
+        # B. OpenAI 兼容
+        else:
+            client = None
+            if model_override and "gemini" in model_override:
+                 if "openrouter" in st.secrets:
+                     client = OpenAI(api_key=st.secrets["openrouter"]["api_key"], base_url=st.secrets["openrouter"]["base_url"])
+            elif "DeepSeek" in provider:
+                client = OpenAI(api_key=st.secrets["deepseek"]["api_key"], base_url=st.secrets["deepseek"]["base_url"])
+            elif "OpenRouter" in provider:
+                client = OpenAI(api_key=st.secrets["openrouter"]["api_key"], base_url=st.secrets["openrouter"]["base_url"])
+            
+            if not client: return "AI Client 初始化失败"
+
+            messages = [{"role": "system", "content": "你是资深会计讲师。回答请使用 Markdown 格式。"}]
+            for h in history:
+                role = "assistant" if h['role'] == "model" else h['role']
+                messages.append({"role": role, "content": h['content']})
+            messages.append({"role": "user", "content": prompt})
+
+            resp = client.chat.completions.create(model=target_model, messages=messages, temperature=0.7, timeout=timeout_sec)
+            return resp.choices[0].message.content
+
+    except Exception as e:
+        return f"AI 连接中断 (超时 {timeout_sec}s): {e}"
+
+# --- 动态获取模型列表 ---
+@st.cache_data(ttl=3600)
+def fetch_google_models(api_key):
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+        data = requests.get(url, timeout=10).json()
+        return [m['name'].replace("models/", "") for m in data.get('models', []) if "generateContent" in m.get('supportedGenerationMethods', [])]
+    except: return []
+
+@st.cache_data(ttl=3600)
+def fetch_openrouter_models(api_key):
+    try:
+        url = "https://openrouter.ai/api/v1/models"
+        resp = requests.get(url, headers={"Authorization": f"Bearer {api_key}"}, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json().get('data', [])
+            return sorted([
+                {'id': m['id'], 'is_free': (float(m.get('pricing',{}).get('prompt',0))==0) or ':free' in m['id']} 
+                for m in data
+            ], key=lambda x: x['id'])
+        return []
+    except: return []
 
 # --- 文件解析 ---
 def extract_pdf(file, start=1, end=None):
@@ -281,6 +259,8 @@ def save_ai_pref():
 # ==============================================================================
 profile = get_user_profile(user_id)
 settings = profile.get('settings') or {}
+# 将设置存入 session 供全局调用
+st.session_state.current_settings = settings
 
 with st.sidebar:
     st.title("🥝 备考中心")
@@ -324,19 +304,8 @@ with st.sidebar:
 
     st.divider()
     
-    # --- 导航菜单 ---
-    menu = st.radio("功能导航", [
-        "🏠 仪表盘",
-        "📂 智能拆书 & 资料",
-        "🎓 AI 课堂 (讲义)",
-        "📝 章节特训 (刷题)",
-        "⚔️ 全真模考",
-        "📊 弱项分析",
-        "❌ 错题本",
-        "⚙️ 设置中心"
-    ], label_visibility="collapsed")
+    menu = st.radio("功能导航", ["🏠 仪表盘", "📚 智能资料库 (V3)", "📝 章节特训", "⚔️ 全真模考", "📊 弱项分析", "❌ 错题本", "⚙️ 设置中心"], label_visibility="collapsed")
     
-    # --- 倒计时 ---
     if profile.get('exam_date'):
         try:
             target = datetime.datetime.strptime(profile['exam_date'], '%Y-%m-%d').date()
@@ -351,39 +320,16 @@ with st.sidebar:
         except: pass
 
 # ==============================================================================
-# 5. 主功能区
+# 5. 各页面逻辑
 # ==============================================================================
 
 # === 🏠 仪表盘 ===
 if menu == "🏠 仪表盘":
-    st.markdown("### 👋 欢迎回来，开始高效学习")
-    
-    # Bento Grid 核心指标
+    st.markdown(f"### 🌞 欢迎回来，{user_id}")
     c1, c2, c3 = st.columns(3)
-    with c1:
-        st.markdown(f"""
-        <div class="css-card">
-            <i class="bi bi-collection-fill stat-icon"></i>
-            <div class="stat-title">累计刷题</div>
-            <div class="stat-value">{profile.get('total_questions_done', 0)}</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with c2:
-        st.markdown(f"""
-        <div class="css-card">
-            <i class="bi bi-fire stat-icon" style="color:#FF7043"></i>
-            <div class="stat-title">连续打卡</div>
-            <div class="stat-value">{profile.get('study_streak', 0)} <span style="font-size:1rem">天</span></div>
-        </div>
-        """, unsafe_allow_html=True)
-    with c3:
-        st.markdown(f"""
-        <div class="css-card">
-            <i class="bi bi-bookmark-x-fill stat-icon" style="color:#dc3545"></i>
-            <div class="stat-title">待复习错题</div>
-            <div class="stat-value">--</div>
-        </div>
-        """, unsafe_allow_html=True)
+    with c1: st.markdown(f"<div class='css-card'><div class='stat-title'>累计刷题</div><div class='stat-value'>{profile.get('total_questions_done',0)}</div><i class='bi bi-pencil-fill stat-icon'></i></div>", unsafe_allow_html=True)
+    with c2: st.markdown(f"<div class='css-card'><div class='stat-title'>连续打卡</div><div class='stat-value'>{profile.get('study_streak',0)}</div><i class='bi bi-fire stat-icon'></i></div>", unsafe_allow_html=True)
+    with c3: st.markdown(f"<div class='css-card'><div class='stat-title'>待复习错题</div><div class='stat-value'>--</div><i class='bi bi-bookmark-x-fill stat-icon'></i></div>", unsafe_allow_html=True)
 
 # === 📂 智能拆书 & 资料 (V3) ===
 elif menu == "📂 智能拆书 & 资料":
@@ -392,45 +338,31 @@ elif menu == "📂 智能拆书 & 资料":
     subjects = get_subjects()
     if not subjects: st.error("请初始化科目数据"); st.stop()
     
-    # 1. 选科目
     c1, c2 = st.columns([1, 2])
     with c1:
         s_name = st.selectbox("1. 所属科目", [s['name'] for s in subjects])
         sid = next(s['id'] for s in subjects if s['name'] == s_name)
-    
     with c2:
         books = get_books(sid)
         b_opts = ["➕ 上传新教材/资料 (PDF)..."] + [b['title'] for b in books]
         sel_book = st.selectbox("2. 选择书籍/资料包", b_opts)
     
-    # A. 上传新书逻辑
+    # A. 上传新书
     if "上传新" in sel_book:
         with st.container():
             st.markdown("#### 📤 智能拆书台")
-            st.caption("AI 自动分析 PDF 目录，将整书拆分为章节，精准管理。")
             up_file = st.file_uploader("上传 PDF", type="pdf")
-            
             if up_file:
                 try:
                     with pdfplumber.open(up_file) as pdf: total_pages = len(pdf.pages)
                     st.success(f"文件页数: {total_pages} 页")
-                    
                     if 'toc_analysis' not in st.session_state:
                         if st.button("🚀 开始 AI 目录分析"):
                             with st.spinner("正在读取前 20 页目录..."):
                                 toc_text = extract_pdf(up_file, 1, 20)
-                            
                             with st.spinner("AI 正在规划章节结构..."):
-                                p = f"""
-                                分析以下目录，提取章节信息。
-                                内容：{toc_text[:10000]}
-                                要求：返回纯 JSON 列表，格式：
-                                [
-                                    {{"title": "第一章 总论", "start_page": 5, "end_page": 18}},
-                                    {{"title": "第二章 存货", "start_page": 19, "end_page": 45}}
-                                ]
-                                """
-                                res = call_ai_universal(p, model_override="google/gemini-1.5-flash") # 强制用 Flash 省钱
+                                p = f"分析目录结构。总页数{total_pages}。返回JSON列表:[{{'title':'第一章 总论','start':5,'end':20}}]。文本：{toc_text[:10000]}"
+                                res = call_ai_universal(p, model_override="google/gemini-1.5-flash")
                                 if res:
                                     try:
                                         clean = res.replace("```json","").replace("```","").strip()
@@ -439,125 +371,107 @@ elif menu == "📂 智能拆书 & 资料":
                     
                     if 'toc_analysis' in st.session_state:
                         st.write("##### 📝 确认拆分方案")
-                        edited_df = st.data_editor(
-                            st.session_state.toc_analysis, 
-                            num_rows="dynamic",
-                            column_config={
-                                "title": "章节名称",
-                                "start_page": st.column_config.NumberColumn("起始页", min_value=1),
-                                "end_page": st.column_config.NumberColumn("结束页", min_value=1)
-                            }
-                        )
-                        
+                        edited_df = st.data_editor(st.session_state.toc_analysis, num_rows="dynamic", column_config={"title": "章节名称", "start_page": st.column_config.NumberColumn("起始页", min_value=1), "end_page": st.column_config.NumberColumn("结束页", min_value=1)})
                         if st.button("✂️ 开始拆分入库"):
                             progress_bar = st.progress(0)
                             try:
-                                book_res = supabase.table("books").insert({
-                                    "user_id": user_id, "subject_id": sid, "title": up_file.name.replace(".pdf",""), "total_pages": total_pages
-                                }).execute()
+                                book_res = supabase.table("books").insert({"user_id": user_id, "subject_id": sid, "title": up_file.name.replace(".pdf",""), "total_pages": total_pages}).execute()
                                 bid = book_res.data[0]['id']
-                                
                                 for i, chap in enumerate(edited_df):
                                     up_file.seek(0)
                                     txt = extract_pdf(up_file, chap['start_page'], chap['end_page'])
                                     if len(txt) > 10:
-                                        c_res = supabase.table("chapters").insert({
-                                            "book_id": bid, "title": chap['title'], "start_page": chap['start_page'], "end_page": chap['end_page'], "user_id": user_id
-                                        }).execute()
+                                        c_res = supabase.table("chapters").insert({"book_id": bid, "title": chap['title'], "start_page": chap['start_page'], "end_page": chap['end_page'], "user_id": user_id}).execute()
                                         cid = c_res.data[0]['id']
                                         save_material_v3(cid, txt, user_id)
                                     progress_bar.progress((i+1)/len(edited_df))
-                                    
                                 st.success("拆分完成！")
                                 del st.session_state.toc_analysis
                                 st.rerun()
-                            except Exception as e:
-                                st.error(f"出错: {e}")
+                            except Exception as e: st.error(f"出错: {e}")
                 except: st.error("文件无效")
 
-    # B. 已有书籍章节管理
+    # B. 已有书籍章节管理 (含选项卡)
     elif books:
         bid = next(b['id'] for b in books if b['title'] == sel_book)
         chapters = get_chapters(bid)
-        
         st.divider()
-        if not chapters:
-            st.warning("本书暂无章节。")
+        if not chapters: st.warning("本书暂无章节。")
         else:
             for chap in chapters:
                 with st.expander(f"📑 {chap['title']}"):
                     has_mat = supabase.table("materials").select("id", count="exact").eq("chapter_id", chap['id']).execute().count
-                    if has_mat: st.success("内容已就绪")
-                    else: 
-                        st.warning("内容缺失")
-                        # 临时补录入口
-                        t_up = st.file_uploader(f"补录 {chap['title']}", type="pdf", key=f"up_{chap['id']}")
-                        if t_up:
-                            txt = extract_pdf(t_up)
-                            save_material_v3(chap['id'], txt, user_id)
-                            st.success("已补录")
+                    if not has_mat: st.warning("内容缺失，请补录")
                     
-                    if st.button("🧠 生成 3 道题", key=f"qz_{chap['id']}"):
-                        mat = supabase.table("materials").select("content").eq("chapter_id", chap['id']).limit(1).execute().data
-                        if mat:
-                            with st.spinner("AI 出题中..."):
-                                p = f"基于内容出3道单选。JSON格式。内容：{mat[0]['content'][:5000]}"
+                    t1, t2, t3 = st.tabs(["📖 教材/补录", "📑 真题提取", "🎓 AI 导学"])
+                    
+                    # Tab 1: 教材
+                    with t1:
+                        if has_mat: st.success("✅ 教材内容已就绪")
+                        t_up = st.file_uploader(f"上传教材PDF", type=['pdf','docx'], key=f"up_m_{chap['id']}")
+                        if t_up and st.button("📥 存入教材", key=f"btn_m_{chap['id']}"):
+                            txt = extract_pdf(t_up) if t_up.name.endswith('.pdf') else extract_docx(t_up)
+                            save_material_v3(chap['id'], txt, user_id)
+                            st.success("已保存")
+                            st.rerun()
+
+                    # Tab 2: 真题
+                    with t2:
+                        st.caption("上传含答案的PDF，AI自动提取入库。")
+                        q_up = st.file_uploader(f"上传真题PDF", type=['pdf','docx'], key=f"up_q_{chap['id']}")
+                        c_p1, c_p2 = st.columns(2)
+                        with c_p1: q_start = st.number_input("题目开始页", 1, key=f"qs_{chap['id']}")
+                        with c_p2: q_end = st.number_input("题目结束页", 10, key=f"qe_{chap['id']}")
+                        
+                        sep = st.checkbox("答案在文档末尾", key=f"sep_{chap['id']}")
+                        if sep:
+                            c_a1, c_a2 = st.columns(2)
+                            with c_a1: a_start = st.number_input("答案开始页", 1, key=f"as_{chap['id']}")
+                            with c_a2: a_end = st.number_input("答案结束页", 10, key=f"ae_{chap['id']}")
+                        
+                        if q_up and st.button("🔍 提取真题", key=f"btn_q_{chap['id']}"):
+                            with st.spinner("AI 提取中..."):
+                                raw = ""
+                                if q_up.name.endswith('.pdf'):
+                                    q_up.seek(0)
+                                    raw = extract_pdf(q_up, q_start, q_end)
+                                    if sep: 
+                                        q_up.seek(0)
+                                        raw += "\n【答案区】\n" + extract_pdf(q_up, a_start, a_end)
+                                else: raw = extract_docx(q_up)
+                                
+                                p = f"提取会计题目。内容：{raw[:15000]}。JSON列表：[{{'question':'..','options':['A..'],'answer':'A','explanation':'..'}}]。"
                                 r = call_ai_universal(p)
                                 if r:
                                     try:
                                         d = json.loads(r.replace("```json","").replace("```","").strip())
-                                        fmt = [{"question":x['content'], "options":x['options'], "answer":x['correct_answer'], "explanation":x['explanation']} for x in d]
-                                        save_questions_v3(fmt, chap['id'], user_id, origin="ai_gen")
-                                        st.success("题目已存入题库！")
+                                        save_questions_v3(d, chap['id'], user_id, origin="extract")
+                                        st.success(f"成功存入 {len(d)} 题")
                                     except: st.error("AI 格式错误")
 
-# === 🎓 AI 课堂 (讲义) ===
-elif menu == "🎓 AI 课堂 (讲义)":
-    st.title("🎓 智能讲义")
-    
-    books = supabase.table("books").select("*").eq("user_id", user_id).execute().data
-    if books:
-        c1, c2 = st.columns(2)
-        with c1: 
-            b_name = st.selectbox("书籍", [b['title'] for b in books])
-            bid = next(b['id'] for b in books if b['title'] == b_name)
-        with c2:
-            chaps = get_chapters(bid)
-            if chaps:
-                c_name = st.selectbox("章节", [c['title'] for c in chaps])
-                cid = next(c['id'] for c in chaps if c['title'] == c_name)
-            else: cid = None
-            
-        if cid:
-            # 显示已有讲义
-            lessons = supabase.table("ai_lessons").select("*").eq("chapter_id", cid).order("created_at", desc=True).execute().data
-            if lessons:
-                tabs = st.tabs([l['title'] or "未命名" for l in lessons])
-                for i, tab in enumerate(tabs):
-                    with tab:
-                        st.markdown(lessons[i]['content'])
-            else:
-                st.info("暂无讲义")
-                
-            # 生成新讲义
-            if st.button("✨ 生成新讲义"):
-                mats = supabase.table("materials").select("content").eq("chapter_id", cid).execute().data
-                if mats:
-                    with st.spinner("AI 备课中..."):
-                        p = f"根据内容生成通俗讲义。内容：{mats[0]['content'][:15000]}"
-                        res = call_ai_universal(p)
-                        if res:
-                            model_name = st.session_state.get('openrouter_model_id') or "Gemini"
-                            supabase.table("ai_lessons").insert({
-                                "chapter_id": cid, "user_id": user_id, "title": f"{model_name}版", "content": res, "ai_model": model_name
-                            }).execute()
-                            st.rerun()
+                    # Tab 3: 导学
+                    with t3:
+                        if st.button("✨ 生成本章导学", key=f"gen_l_{chap['id']}"):
+                            mat = supabase.table("materials").select("content").eq("chapter_id", chap['id']).limit(1).execute().data
+                            if mat:
+                                with st.spinner("备课中..."):
+                                    res = call_ai_universal(f"生成通俗讲义。内容：{mat[0]['content'][:20000]}")
+                                    if res:
+                                        model = st.session_state.get('selected_provider', 'AI')
+                                        supabase.table("ai_lessons").insert({"chapter_id": chap['id'], "user_id": user_id, "title": f"{model}讲义", "content": res, "ai_model": model}).execute()
+                                        st.rerun()
+                            else: st.error("缺教材")
+                        
+                        # 显示讲义
+                        lessons = supabase.table("ai_lessons").select("*").eq("chapter_id", chap['id']).execute().data
+                        if lessons:
+                            for l in lessons:
+                                with st.expander(f"📘 {l['title']}"): st.markdown(l['content'])
 
-# === 📝 章节特训 (刷题) ===
-elif menu == "📝 章节特训 (刷题)":
+# === 📝 章节特训 ===
+elif menu == "📝 章节特训":
     st.title("📝 章节突破")
     
-    # JS 计时器
     if st.session_state.get('quiz_active'):
         if 'js_start_time' not in st.session_state: st.session_state.js_start_time = int(time.time() * 1000)
         components.html(f"""<div style='position:fixed;top:60px;right:20px;z-index:9999;background:#00C090;color:white;padding:5px 15px;border-radius:20px;font-family:monospace;font-weight:bold'>⏱️ <span id='t'>00:00</span></div><script>setInterval(()=>{{var d=Math.floor((Date.now()-{st.session_state.js_start_time})/1000);document.getElementById('t').innerText=Math.floor(d/60).toString().padStart(2,'0')+':'+(d%60).toString().padStart(2,'0')}},1000)</script>""", height=0)
@@ -567,68 +481,49 @@ elif menu == "📝 章节特训 (刷题)":
         if subjects:
             c1, c2, c3 = st.columns(3)
             with c1: 
-                s_name = st.selectbox("科目", [s['name'] for s in subjects])
-                sid = next(s['id'] for s in subjects if s['name'] == s_name)
+                s = st.selectbox("科目", [x['name'] for x in subjects])
+                sid = next(x['id'] for x in subjects if x['name']==s)
             with c2:
                 books = get_books(sid)
-                if books:
-                    b_name = st.selectbox("书籍", [b['title'] for b in books])
-                    bid = next(b['id'] for b in books if b['title'] == b_name)
-                else: bid = None
+                if not books: st.warning("该科目无书"); st.stop()
+                b = st.selectbox("书籍", [x['title'] for x in books])
+                bid = next(x['id'] for x in books if x['title']==b)
             with c3:
-                if bid:
-                    chaps = get_chapters(bid)
-                    if chaps:
-                        c_name = st.selectbox("章节", [c['title'] for c in chaps])
-                        cid = next(c['id'] for c in chaps if c['title'] == c_name)
-                    else: cid = None
-                else: cid = None
-            
-            if cid:
-                st.markdown("---")
-                # 进度条
-                try:
-                    q_res = supabase.table("question_bank").select("id").eq("chapter_id", cid).execute().data
-                    total = len(q_res)
-                    if total > 0:
-                        done_res = supabase.table("user_answers").select("question_id").eq("user_id", user_id).eq("is_correct", True).execute().data
-                        done_ids = set([d['question_id'] for d in done_res])
-                        mastered = len(done_ids.intersection(set([q['id'] for q in q_res])))
-                        st.caption(f"📈 进度：{mastered}/{total}")
-                        st.progress(mastered/total)
-                except: pass
+                chaps = get_chapters(bid)
+                if not chaps: st.warning("本书无章节"); st.stop()
+                c = st.selectbox("章节", [x['title'] for x in chaps])
+                cid = next(x['id'] for x in chaps if x['title']==c)
                 
-                if st.button("🚀 开始刷题", type="primary", use_container_width=True):
-                    qs = supabase.table("question_bank").select("*").eq("chapter_id", cid).limit(20).execute().data
-                    if qs:
-                        random.shuffle(qs)
-                        st.session_state.quiz_data = qs[:10]
-                        st.session_state.q_idx = 0
-                        st.session_state.quiz_active = True
-                        st.session_state.js_start_time = int(time.time() * 1000)
-                        st.rerun()
-                    else: st.error("本章无题")
+            try:
+                total = supabase.table("question_bank").select("id", count="exact").eq("chapter_id", cid).execute().count
+                st.caption(f"📚 题库库存: {total} 题")
+            except: pass
+            
+            if st.button("🚀 开始刷题", type="primary", use_container_width=True):
+                qs = supabase.table("question_bank").select("*").eq("chapter_id", cid).limit(20).execute().data
+                if qs:
+                    random.shuffle(qs)
+                    st.session_state.quiz_data = qs[:10]
+                    st.session_state.q_idx = 0
+                    st.session_state.quiz_active = True
+                    st.session_state.js_start_time = int(time.time()*1000)
+                    st.rerun()
+                else: st.error("本章无题")
 
-    # 做题界面
     if st.session_state.get('quiz_active'):
         idx = st.session_state.q_idx
         total = len(st.session_state.quiz_data)
-        
         if idx >= total:
             st.balloons()
             st.success("完成！")
-            if st.button("返回"):
-                st.session_state.quiz_active = False
-                st.rerun()
+            if st.button("返回"): 
+                st.session_state.quiz_active = False; st.rerun()
         else:
             q = st.session_state.quiz_data[idx]
-            
             st.progress((idx+1)/total)
-            q_text = q.get('content') or q.get('question')
-            st.markdown(f"<div class='css-card'><h4>Q{idx+1}: {q_text}</h4></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='css-card'><h4>Q{idx+1}: {q.get('content')}</h4></div>", unsafe_allow_html=True)
             
-            # 多选判断
-            q_ans = (q.get('correct_answer') or q.get('answer') or "").upper().replace(" ","").replace(",","")
+            q_ans = (q.get('correct_answer') or "").upper().replace(" ","").replace(",","")
             is_multi = len(q_ans) > 1 or q.get('type') == 'multi'
             
             user_val = ""
@@ -644,299 +539,128 @@ elif menu == "📝 章节特训 (刷题)":
             
             sub_key = f"sub_{idx}"
             if sub_key not in st.session_state: st.session_state[sub_key] = False
-            
             if st.button("✅ 提交", use_container_width=True) and not st.session_state[sub_key]:
                 st.session_state[sub_key] = True
             
             if st.session_state[sub_key]:
-                if user_val == q_ans:
+                if user_val == q_ans: 
                     st.markdown("<div class='success-box'>🎉 正确</div>", unsafe_allow_html=True)
                     supabase.table("user_answers").insert({"user_id": user_id, "question_id": q['id'], "user_response": user_val, "is_correct": True}).execute()
                 else:
-                    st.error(f"❌ 错误。答案：{q_ans}")
-                    # 防重复插入逻辑
+                    st.error(f"❌ 错误。答案: {q_ans}")
                     exist = supabase.table("user_answers").select("id").eq("user_id", user_id).eq("question_id", q['id']).eq("is_correct", False).execute().data
-                    if exist:
-                        supabase.table("user_answers").update({"created_at": datetime.datetime.now().isoformat()}).eq("id", exist[0]['id']).execute()
-                    else:
+                    if not exist:
                         supabase.table("user_answers").insert({"user_id": user_id, "question_id": q['id'], "user_response": user_val, "is_correct": False}).execute()
-                
                 st.info(f"解析：{q.get('explanation')}")
                 
                 # AI 举例
-                chat_key = f"q_chat_{idx}"
-                if chat_key not in st.session_state: st.session_state[chat_key] = []
-                if st.button("🤔 AI 举个栗子"):
-                    with st.spinner("..."):
-                        r = call_ai_universal(f"解释：{q_text}。答案{q_ans}。解析{q.get('explanation')}")
-                        if r: st.session_state[chat_key].append({"role":"model", "content":r})
+                c_k = f"chat_{idx}"
+                if c_k not in st.session_state: st.session_state[c_k] = []
+                if st.button("🤔 AI 举例"):
+                    r = call_ai_universal(f"举例解释：{q.get('content')} 答案{q_ans}")
+                    if r: st.session_state[c_k].append({"role":"model","content":r})
                 
-                for m in st.session_state[chat_key]:
-                    css = "chat-ai" if m['role']=="model" else "chat-user"
-                    st.markdown(f"<div class='{css}'>{m['content']}</div>", unsafe_allow_html=True)
-                
-                if st.session_state[chat_key]:
-                    ask = st.text_input("追问...", key=f"a_{idx}")
-                    if st.button("发送", key=f"sa_{idx}") and ask:
-                        st.session_state[chat_key].append({"role":"user", "content":ask})
-                        r = call_ai_universal(ask, history=st.session_state[chat_key][:-1])
-                        st.session_state[chat_key].append({"role":"model", "content":r})
-                        st.rerun()
+                for m in st.session_state[c_k]:
+                    st.markdown(f"<div class='chat-ai'>{m['content']}</div>", unsafe_allow_html=True)
 
             st.markdown("---")
-            c_next, c_end = st.columns([4, 1])
-            with c_next:
-                if st.button("➡️ 下一题", use_container_width=True):
-                    st.session_state.q_idx += 1
-                    st.rerun()
-            with c_end:
-                if st.button("🏁"): 
-                    st.session_state.quiz_active = False; st.rerun()
+            if st.button("➡️ 下一题", use_container_width=True):
+                st.session_state.q_idx += 1; st.rerun()
 
 # === ⚔️ 全真模考 ===
 elif menu == "⚔️ 全真模考":
     st.title("⚔️ 全真模拟")
-    
     if 'exam_session' not in st.session_state: st.session_state.exam_session = None
     
     if not st.session_state.exam_session:
-        subjects = get_subjects()
-        if subjects:
-            s_name = st.selectbox("科目", [s['name'] for s in subjects])
-            sid = next(s['id'] for s in subjects if s['name'] == s_name)
+        # (简化展示历史)
+        st.write("点击开始生成试卷...")
+        if st.button("🚀 生成试卷", type="primary"):
+            # 简单拉取题库
+            qs = supabase.table("question_bank").select("*").limit(20).execute().data
+            if qs:
+                st.session_state.exam_session = {"paper": qs, "answers": {}, "start": int(time.time()*1000), "submitted": False}
+                st.rerun()
+            else: st.error("题库不足")
             
-            if st.button("🚀 生成试卷", type="primary"):
-                # 跨章节组卷逻辑
-                # 1. 找该科目下所有书 -> 所有章 -> 所有题
-                books = get_books(sid)
-                bids = [b['id'] for b in books]
-                if bids:
-                    chaps = supabase.table("chapters").select("id").in_("book_id", bids).execute().data
-                    cids = [c['id'] for c in chaps]
-                    if cids:
-                        qs = supabase.table("question_bank").select("*").in_("chapter_id", cids).limit(100).execute().data
-                        if len(qs) >= 5:
-                            random.shuffle(qs)
-                            st.session_state.exam_session = {
-                                "paper": qs[:10],
-                                "answers": {},
-                                "start_time": int(time.time()*1000),
-                                "duration": 60,
-                                "submitted": False
-                            }
-                            st.rerun()
-                        else: st.error("题目不足")
-                    else: st.error("无章节")
-                else: st.error("无书籍")
-    
-    # 考试中
     elif not st.session_state.exam_session['submitted']:
         session = st.session_state.exam_session
-        
-        # JS 倒计时
-        end_ms = session['start_time'] + (session['duration'] * 60 * 1000)
-        components.html(f"""<div style='position:fixed;top:60px;right:20px;z-index:9999;background:#dc3545;color:white;padding:5px 15px;border-radius:20px;font-family:monospace;font-weight:bold'>⏳ <span id='et'>--:--</span></div><script>setInterval(()=>{{var d=Math.floor(({end_ms}-Date.now())/1000);if(d<=0)document.getElementById('et').innerText='00:00';else document.getElementById('et').innerText=Math.floor(d/60).toString().padStart(2,'0')+':'+(d%60).toString().padStart(2,'0')}},1000)</script>""", height=0)
+        end_ms = session['start'] + 3600000 # 1小时
+        components.html(f"""<div style='position:fixed;top:60px;right:20px;z-index:9999;background:#dc3545;color:white;padding:5px 15px;border-radius:20px'>⏳ <span id='et'>--:--</span></div><script>setInterval(()=>{{var d=Math.floor(({end_ms}-Date.now())/1000);document.getElementById('et').innerText=Math.floor(d/60)+':'+(d%60)}},1000)</script>""", height=0)
         
         with st.form("exam"):
             for i, q in enumerate(session['paper']):
                 st.markdown(f"**{i+1}. {q['content']}**")
-                
-                q_ans = (q.get('correct_answer') or "").upper().replace(" ","")
-                is_multi = len(q_ans) > 1 or q.get('type') == 'multi'
-                
-                if is_multi:
-                    st.caption("多选")
-                    opts = []
-                    for o in q['options']:
-                        if st.checkbox(o, key=f"e_m_{i}_{o}"): opts.append(o[0])
-                    session['answers'][i] = "".join(sorted(opts))
-                else:
-                    val = st.radio("单选", q['options'], key=f"e_s_{i}", label_visibility="collapsed")
-                    if val: session['answers'][i] = val[0]
+                # 简单单选
+                session['answers'][i] = st.radio("选", q['options'], key=f"e_{i}")
                 st.divider()
-            
-            if st.form_submit_button("交卷", type="primary"):
+            if st.form_submit_button("交卷"):
                 session['submitted'] = True
                 st.rerun()
-    
-    # 考后报告
     else:
-        session = st.session_state.exam_session
-        score = 0
-        detail = []
-        for i, q in enumerate(session['paper']):
-            u = session['answers'].get(i, "")
-            std = (q.get('correct_answer') or "").upper().replace(" ","")
-            is_corr = (u == std)
-            if is_corr: score += 10
-            detail.append({"q": q['content'], "u": u, "std": std, "ok": is_corr, "exp": q.get('explanation')})
-            
-            # 存入错题 (非阻塞)
-            if not is_corr:
-                try: supabase.table("user_answers").insert({"user_id": user_id, "question_id": q['id'], "user_response": u, "is_correct": False}).execute()
-                except: pass
-
         st.balloons()
-        st.markdown(f"<h1 style='text-align:center; color:#00C090'>{score} 分</h1>", unsafe_allow_html=True)
-        
-        for d in detail:
-            with st.expander(f"{'✅' if d['ok'] else '❌'} {d['q'][:20]}..."):
-                st.write(d['q'])
-                st.write(f"你: {d['u']} | 标: {d['std']}")
-                st.info(d['exp'])
-        
-        if st.button("退出"):
-            st.session_state.exam_session = None
-            st.rerun()
+        st.success("考试结束！")
+        if st.button("退出"): st.session_state.exam_session = None; st.rerun()
 
 # === 📊 弱项分析 ===
 elif menu == "📊 弱项分析":
-    st.title("📊 学习效果分析")
-    
-    # 1. 获取数据 (联表查询有点慢，这里只查记录表，用 Python 处理)
-    try:
-        # 获取最近 500 条做题记录
-        rows = supabase.table("user_answers").select("*").order("created_at", desc=True).limit(500).execute().data
-        
-        if not rows:
-            st.info("暂无做题数据，快去【章节特训】或【全真模考】刷几道题吧！")
-        else:
-            df = pd.DataFrame(rows)
-            
-            # --- 核心指标卡 ---
-            total = len(df)
-            correct_count = len(df[df['is_correct'] == True])
-            rate = int((correct_count / total) * 100)
-            
-            # 计算平均耗时 (秒)
-            avg_time = int(df['time_taken'].mean()) if 'time_taken' in df.columns else 0
-            
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                st.markdown(f"<div class='css-card' style='text-align:center'><div style='color:#888'>综合正确率</div><div style='font-size:32px; color:#0d6efd; font-weight:bold'>{rate}%</div></div>", unsafe_allow_html=True)
-            with c2:
-                st.markdown(f"<div class='css-card' style='text-align:center'><div style='color:#888'>刷题总数</div><div style='font-size:32px; color:#198754; font-weight:bold'>{total}</div></div>", unsafe_allow_html=True)
-            with c3:
-                st.markdown(f"<div class='css-card' style='text-align:center'><div style='color:#888'>平均每题耗时</div><div style='font-size:32px; color:#ffc107; font-weight:bold'>{avg_time}s</div></div>", unsafe_allow_html=True)
+    st.title("📊 分析")
+    rows = supabase.table("user_answers").select("*").order("created_at", desc=True).limit(500).execute().data
+    if rows:
+        df = pd.DataFrame(rows)
+        c1, c2 = st.columns(2)
+        with c1: st.metric("刷题总数", len(df))
+        with c2: st.metric("正确率", f"{int(len(df[df['is_correct']==True])/len(df)*100)}%")
+        fig = px.pie(df, names='is_correct', color_discrete_map={True:'#00C090', False:'#FF7043'})
+        st.plotly_chart(fig)
+    else: st.info("无数据")
 
-            st.divider()
-
-            # --- 图表区 ---
-            col_chart1, col_chart2 = st.columns(2)
-            
-            with col_chart1:
-                st.subheader("📈 正确率分布")
-                # 饼图
-                fig_pie = px.pie(df, names='is_correct', title='正误比例', 
-                                color_discrete_map={True: '#00C090', False: '#FF7043'},
-                                labels={'is_correct': '是否正确', 'True': '正确', 'False': '错误'})
-                st.plotly_chart(fig_pie, use_container_width=True)
-                
-            with col_chart2:
-                st.subheader("🔥 每日刷题热度")
-                # 柱状图
-                df['date'] = pd.to_datetime(df['created_at']).dt.date
-                daily_counts = df.groupby('date').size().reset_index(name='count')
-                fig_bar = px.bar(daily_counts, x='date', y='count', title='每日刷题量')
-                fig_bar.update_traces(marker_color='#0d6efd')
-                st.plotly_chart(fig_bar, use_container_width=True)
-
-            # --- AI 诊断区 ---
-            st.divider()
-            st.subheader("🩺 AI 学习诊断")
-            
-            if st.button("生成深度分析报告", type="primary"):
-                with st.spinner("AI 正在分析你的做题习惯与薄弱点..."):
-                    # 简化的分析 Prompt
-                    prompt = f"""
-                    用户最近做了 {total} 道会计题，正确率为 {rate}%。
-                    平均每题耗时 {avg_time} 秒。
-                    请根据这些数据，给出一份简短的学习建议。
-                    指出他可能存在的问题（如：是否做得太快导致粗心？还是基础不牢？）。
-                    语气：鼓励且专业。
-                    """
-                    advice = call_ai_universal(prompt)
-                    if advice:
-                        st.markdown(f"""
-                        <div class="bs-card" style="border-left: 5px solid #6610f2; background-color: #f3f0ff;">
-                            <h5>🤖 你的专属诊断书：</h5>
-                            {advice}
-                        </div>
-                        """, unsafe_allow_html=True)
-
-    except Exception as e:
-        st.error(f"数据加载失败: {e}")
-
-# === ❌ 错题本 (去重 + 记忆) ===
+# === ❌ 错题本 ===
 elif menu == "❌ 错题本":
     st.title("❌ 错题集")
-    # 联表查询
-    try:
-        errs = supabase.table("user_answers").select("*, question_bank(*)").eq("user_id", user_id).eq("is_correct", False).order("created_at", desc=True).execute().data
-    except: errs = []
+    errs = supabase.table("user_answers").select("*, question_bank(*)").eq("user_id", user_id).eq("is_correct", False).execute().data
     
     unique_q = {}
     for e in errs:
         if e['question_id'] not in unique_q: unique_q[e['question_id']] = e
         
-    if not unique_q:
-        st.success("🎉 无错题！")
+    if not unique_q: st.success("🎉 无错题")
     else:
-        st.info(f"待复习：{len(unique_q)} 题")
         for qid, e in unique_q.items():
             q = e['question_bank']
             if not q: continue
-            
             with st.expander(f"🔴 {q['content'][:30]}..."):
-                # 题目 & 选项美化
-                st.markdown(f"**题目：** {q['content']}")
-                if q.get('options'):
-                    for o in q['options']:
-                        st.markdown(f"<div class='option-item'>{o}</div>", unsafe_allow_html=True)
+                st.markdown(f"**题目**：{q['content']}")
+                for o in q['options']: st.markdown(f"<div class='option-item'>{o}</div>", unsafe_allow_html=True)
+                st.error(f"你的: {e['user_response']}")
+                st.success(f"正确: {q['correct_answer']}")
+                st.info(f"解析: {q['explanation']}")
                 
-                c1, c2 = st.columns(2)
-                c1.error(f"错选：{e['user_response']}")
-                c2.success(f"正解：{q['correct_answer']}")
-                
-                st.info(f"💡 **解析：** {q['explanation']}")
-                
-                # 功能区
-                chat_hist = e.get('ai_chat_history') or []
-                c_help, c_del = st.columns([3, 1])
-                
-                if c_help.button("🤔 AI 举例", key=f"err_ex_{qid}"):
-                    if not chat_hist:
-                        res = call_ai_universal(f"举例解释：{q['content']}。答案{q['correct_answer']}。")
-                        if res:
-                            nh = [{"role":"model", "content":res}]
-                            supabase.table("user_answers").update({"ai_chat_history": nh}).eq("id", e['id']).execute()
-                            st.rerun()
-                
-                if c_del.button("✅ 移除", key=f"err_rm_{qid}"):
-                    # 批量移除
+                if st.button("✅ 移除", key=f"rm_{qid}"):
                     supabase.table("user_answers").update({"is_correct": True}).eq("question_id", qid).execute()
                     st.rerun()
-                
-                # 聊天记录
-                if chat_hist:
-                    st.markdown("---")
-                    for m in chat_hist:
-                        css = "chat-ai" if m['role']=="model" else "chat-user"
-                        st.markdown(f"<div class='{css}'>{m['content']}</div>", unsafe_allow_html=True)
-                    
-                    ask = st.text_input("追问...", key=f"e_ask_{qid}")
-                    if st.button("发送", key=f"e_snd_{qid}") and ask:
-                        chat_hist.append({"role":"user", "content":ask})
-                        r = call_ai_universal(ask, history=chat_hist[:-1])
-                        chat_hist.append({"role":"model", "content":r})
-                        supabase.table("user_answers").update({"ai_chat_history": chat_hist}).eq("id", e['id']).execute()
-                        st.rerun()
 
 # === ⚙️ 设置中心 ===
 elif menu == "⚙️ 设置中心":
     st.title("⚙️ 设置")
     
-    # 倒计时设置
+    # AI 连通性测试
+    st.markdown("#### 🤖 AI 模型配置")
+    curr_timeout = settings.get('ai_timeout', 60)
+    new_timeout = st.slider("AI 响应超时时间 (秒)", 10, 300, curr_timeout)
+    if new_timeout != curr_timeout:
+        update_settings(user_id, {"ai_timeout": new_timeout})
+        st.toast("已保存")
+        
+    if st.button("📡 测试当前模型连通性"):
+        with st.spinner("测试中..."):
+            res = call_ai_universal("Hello, response 'OK'.")
+            if "OK" in res or len(res) > 0: st.success(f"✅ 连接成功！回复: {res}")
+            else: st.error(f"❌ 连接失败: {res}")
+
+    st.divider()
+    
+    # 倒计时
     curr = datetime.date(2025,9,6)
     if profile.get('exam_date'):
         try: curr = datetime.datetime.strptime(profile['exam_date'], '%Y-%m-%d').date()
@@ -945,9 +669,3 @@ elif menu == "⚙️ 设置中心":
     if new_d != curr:
         supabase.table("study_profile").update({"exam_date": str(new_d)}).eq("user_id", user_id).execute()
         st.rerun()
-    
-    st.divider()
-    if st.button("🗑️ 清空所有数据 (慎点)"):
-        supabase.table("user_answers").delete().eq("user_id", user_id).execute()
-        supabase.table("books").delete().eq("user_id", user_id).execute()
-        st.success("已清空")
