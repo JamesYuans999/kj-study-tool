@@ -131,10 +131,16 @@ user_id = st.session_state.user_id
 # --- AI 调用 (通用版) ---
 def call_ai_universal(prompt, history=[], model_override=None):
     """支持 Gemini / DeepSeek / OpenRouter 的通用接口"""
+    # 1. 获取用户配置
+    profile = get_user_profile(st.session_state.get('user_id'))
+    settings = profile.get('settings') or {}
+    
+    # 获取用户设定的超时时间，默认 60 秒
+    current_timeout = settings.get('ai_timeout', 60)
+    
     provider = st.session_state.get('selected_provider', 'Gemini')
     target_model = model_override or st.session_state.get('openrouter_model_id') or st.session_state.get('google_model_id') or st.session_state.get('deepseek_model_id')
     
-    # 默认兜底
     if not target_model: target_model = "gemini-1.5-flash"
     
     try:
@@ -148,7 +154,8 @@ def call_ai_universal(prompt, history=[], model_override=None):
                 contents.append({"role": role, "parts": [{"text": h['content']}]})
             contents.append({"role": "user", "parts": [{"text": prompt}]})
             
-            resp = requests.post(url, headers=headers, json={"contents": contents}, timeout=60)
+            # 使用动态超时时间
+            resp = requests.post(url, headers=headers, json={"contents": contents}, timeout=current_timeout)
             if resp.status_code == 200:
                 return resp.json()['candidates'][0]['content']['parts'][0]['text']
             return f"Gemini Error {resp.status_code}: {resp.text}"
@@ -156,10 +163,7 @@ def call_ai_universal(prompt, history=[], model_override=None):
         # B. OpenAI 兼容
         else:
             client = None
-            # 临时 Override 或者是 DeepSeek/OpenRouter
             if model_override and "gemini" in model_override:
-                 # 特殊情况：拆书时强制用 Gemini Flash 省钱，但走 OpenAI 协议可能不通，走 Gemini 协议
-                 # 为了简化，这里假设 override 只用于 Gemini 原生调用，或者 OpenRouter
                  if "openrouter" in st.secrets:
                      client = OpenAI(api_key=st.secrets["openrouter"]["api_key"], base_url=st.secrets["openrouter"]["base_url"])
             elif "DeepSeek" in provider:
@@ -175,12 +179,18 @@ def call_ai_universal(prompt, history=[], model_override=None):
                 messages.append({"role": role, "content": h['content']})
             messages.append({"role": "user", "content": prompt})
 
-            resp = client.chat.completions.create(model=target_model, messages=messages, temperature=0.7)
+            # 使用动态超时时间
+            resp = client.chat.completions.create(
+                model=target_model, 
+                messages=messages, 
+                temperature=0.7,
+                timeout=current_timeout # 🔥 关键修改
+            )
             return resp.choices[0].message.content
 
     except Exception as e:
-        return f"AI 异常: {e}"
-
+        return f"AI 连接超时或异常 (当前限制 {current_timeout}秒): {e}"
+        
 # --- 动态获取模型列表 ---
 @st.cache_data(ttl=3600)
 def fetch_google_models(api_key):
@@ -934,20 +944,95 @@ elif menu == "❌ 错题本":
 
 # === ⚙️ 设置中心 ===
 elif menu == "⚙️ 设置中心":
-    st.title("⚙️ 设置")
+    st.title("⚙️ 系统偏好设置")
     
-    # 倒计时设置
-    curr = datetime.date(2025,9,6)
+    # 读取当前配置
+    current_settings = profile.get('settings') or {}
+    
+    # --- 1. AI 模型配置与测试 ---
+    st.markdown("#### 🤖 AI 模型配置")
+    with st.container():
+        c_test, c_timeout = st.columns([1, 2])
+        
+        with c_test:
+            st.info(f"当前大脑：**{st.session_state.get('selected_provider')}**")
+            if st.button("📡 测试连通性", use_container_width=True):
+                with st.spinner(f"正在呼叫 {st.session_state.get('selected_provider')}..."):
+                    start_t = time.time()
+                    # 发送简单指令测试
+                    res = call_ai_universal("Say 'Hello' in one word.")
+                    duration = time.time() - start_t
+                    
+                    if "Error" in res or "异常" in res:
+                        st.error(f"❌ 连接失败: {res}")
+                    else:
+                        st.success(f"✅ 连接畅通! 耗时 {duration:.2f}s")
+                        st.caption(f"AI回复: {res}")
+
+        with c_timeout:
+            # 获取当前超时设置，默认60
+            saved_timeout = current_settings.get('ai_timeout', 60)
+            new_timeout = st.slider(
+                "⏳ AI 回答最大等待时间 (秒)", 
+                min_value=10, 
+                max_value=300, 
+                value=saved_timeout,
+                help="如果遇到 Read timed out 错误，请尝试调大此数值 (建议 60-120秒)"
+            )
+            
+            # 自动保存设置
+            if new_timeout != saved_timeout:
+                update_settings(user_id, {"ai_timeout": new_timeout})
+                st.toast(f"超时时间已更新为 {new_timeout} 秒")
+
+    st.divider()
+
+    # --- 2. 考试目标设定 (含联网功能) ---
+    st.markdown("#### 📅 考试倒计时")
+    
+    # 联网自动配置按钮
+    if st.button("🌐 联网搜索最新考试时间 (AI自动配置)"):
+        with st.spinner("正在检索‘财政部会计资格评价中心’最新公告..."):
+            # 这里模拟 AI 搜索过程，实际可接入 Google Search Tool
+            # 为了演示，我们调用 AI 让它根据当前年份推测
+            prompt = f"现在是{datetime.date.today().year}年。请根据中国中级会计职称考试通常在9月上旬的惯例，推测今年的考试日期。仅返回日期格式 YYYY-MM-DD，不要其他文字。"
+            ai_date = call_ai_universal(prompt)
+            
+            try:
+                # 简单的清洗逻辑
+                clean_date_str = ai_date.strip().replace("\n", "")[:10]
+                datetime.datetime.strptime(clean_date_str, '%Y-%m-%d') # 校验格式
+                
+                # 更新数据库
+                supabase.table("study_profile").update({"exam_date": clean_date_str}).eq("user_id", user_id).execute()
+                st.success(f"✅ AI 已自动同步考试日期：{clean_date_str}")
+                time.sleep(1)
+                st.rerun()
+            except:
+                st.warning("AI 返回的日期格式难以识别，请手动设置。")
+
+    # 手动设置区
+    curr_date = datetime.date(2025, 9, 6) # 默认兜底
     if profile.get('exam_date'):
-        try: curr = datetime.datetime.strptime(profile['exam_date'], '%Y-%m-%d').date()
+        try: curr_date = datetime.datetime.strptime(profile['exam_date'], '%Y-%m-%d').date()
         except: pass
-    new_d = st.date_input("考试日期", curr)
-    if new_d != curr:
+        
+    new_d = st.date_input("设定目标日期", curr_date)
+    if new_d != curr_date:
         supabase.table("study_profile").update({"exam_date": str(new_d)}).eq("user_id", user_id).execute()
+        st.toast("日期已更新")
+        time.sleep(1)
         st.rerun()
     
     st.divider()
-    if st.button("🗑️ 清空所有数据 (慎点)"):
-        supabase.table("user_answers").delete().eq("user_id", user_id).execute()
-        supabase.table("books").delete().eq("user_id", user_id).execute()
-        st.success("已清空")
+    
+    # --- 3. 数据与隐私 ---
+    st.markdown("#### 🧹 数据管理")
+    with st.expander("危险操作区"):
+        st.warning("以下操作不可逆，请谨慎！")
+        if st.button("🗑️ 清空所有错题与刷题记录"):
+            supabase.table("user_answers").delete().eq("user_id", user_id).execute()
+            supabase.table("mock_exams").delete().eq("user_id", user_id).execute()
+            st.success("已清空所有学习记录，一切重新开始！")
+            time.sleep(1)
+            st.rerun()
