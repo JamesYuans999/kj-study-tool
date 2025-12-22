@@ -342,7 +342,7 @@ with st.sidebar:
     st.divider()
     
     # --- 导航 ---
-    menu = st.radio("功能导航", ["🏠 仪表盘", "📚 智能资料库 (V3)", "📝 章节特训", "⚔️ 全真模考", "📊 弱项分析", "❌ 错题本", "⚙️ 设置中心"], label_visibility="collapsed")
+    menu = st.radio("功能导航", ["🏠 仪表盘", "📚 智能资料库 (V3)", "📝 章节特训", "⚔️ ", "📊 弱项分析", "❌ 错题本", "⚙️ 设置中心"], label_visibility="collapsed")
     
     # --- 倒计时 ---
     if profile.get('exam_date'):
@@ -632,20 +632,30 @@ elif menu == "❌ 错题本":
 
 # === ⚙️ 设置中心 ===
 elif menu == "⚙️ 设置中心":
-    st.title("⚙️ 偏好设置")
-    if st.button("🤖 联网自动同步考情"):
-        with st.spinner("正在检索 2025 考纲..."):
-            time.sleep(1)
-            supabase.table("study_profile").update({"exam_date": "2025-09-06"}).eq("user_id", user_id).execute()
-            st.success("已更新考试日期：2025-09-06")
-            st.rerun()
-            
-    cur_date = datetime.date(2025,9,6)
-    if profile.get('exam_date'): cur_date = datetime.datetime.strptime(profile['exam_date'], '%Y-%m-%d').date()
-    new_d = st.date_input("手动设置日期", cur_date)
-    if new_d != cur_date:
-        supabase.table("study_profile").update({"exam_date": str(new_d)}).eq("user_id", user_id).execute()
+    st.title("⚙️ 系统设置")
+    
+    st.markdown("#### 📅 考试倒计时")
+    current_date = datetime.date(2025, 9, 6)
+    if profile.get('exam_date'):
+        try: current_date = datetime.datetime.strptime(profile['exam_date'], '%Y-%m-%d').date()
+        except: pass
+        
+    new_date = st.date_input("设定目标日期", current_date)
+    if new_date != current_date:
+        supabase.table("study_profile").update({"exam_date": str(new_date)}).eq("user_id", user_id).execute()
+        st.toast("日期已更新")
+        time.sleep(1)
         st.rerun()
+        
+    st.divider()
+    
+    st.markdown("#### 🧹 数据管理")
+    if st.button("⚠️ 清空所有错题记录 (慎点)"):
+        supabase.table("user_answers").delete().eq("user_id", user_id).execute()
+        st.success("已清空，一切重新开始！")
+        
+    st.markdown("#### ℹ️ 关于")
+    st.caption("中级会计 AI 私教 Pro v3.0 | Powered by Gemini & Supabase")
 
 # === 📚 资料库 (双轨录入) ===
 # =========================================================
@@ -1008,60 +1018,192 @@ elif menu == "📝 章节特训": # 注意菜单名字要和你侧边栏定义�
                     st.session_state.q_idx += 1
                     st.rerun()
 # =========================================================
-# ⚔️ 全真模考
+# ⚔️ 全真模考 (V3 适配版：跨书本组卷)
 # =========================================================
 elif menu == "⚔️ 全真模考":
-    st.title("⚔️ 全真模拟")
-    if 'exam' not in st.session_state: st.session_state.exam = None
+    st.title("⚔️ 全真模拟考试")
     
-    if not st.session_state.exam:
+    # 状态管理
+    if 'exam_session' not in st.session_state: st.session_state.exam_session = None
+
+    # --- A. 考前配置台 ---
+    if not st.session_state.exam_session:
+        st.markdown("""
+        <div class="css-card" style="border-left: 5px solid #FF7043">
+            <h4>🐢 沉浸式考场</h4>
+            <p style="color:#666; font-size:14px">系统将从该科目下<b>所有书籍、所有章节</b>中随机抽取题目，组成一套全真试卷。</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
         subjects = get_subjects()
-        if subjects:
-            sn = st.selectbox("科目", [s['name'] for s in subjects])
-            mode = st.radio("类型", ["精简 (5题)", "完整 (20题)"])
-            if st.button("🚀 开始考试"):
-                sid = next(s['id'] for s in subjects if s['name'] == sn)
-                # 简单随机抽题逻辑
-                qs = supabase.table("question_bank").select("*").eq("chapter_id", sid).limit(20).execute().data # 实际应跨章节抽
-                if qs:
-                    st.session_state.exam = {"qs": qs[:5] if "精简" in mode else qs, "start": time.time(), "ans": {}}
-                    st.rerun()
-                else: st.error("题库题目不足")
+        if not subjects: st.stop()
+        
+        c1, c2 = st.columns([1, 1])
+        with c1:
+            sel_sub_name = st.selectbox("选择科目", [s['name'] for s in subjects])
+            sid = next(s['id'] for s in subjects if s['name'] == sel_sub_name)
+        
+        with c2:
+            mode = st.radio("试卷类型", ["🐇 快速自测 (5题)", "🐢 完整模考 (20题)"], horizontal=True)
+            limit = 5 if "快速" in mode else 20
+
+        if st.button("🚀 生成试卷", type="primary", use_container_width=True):
+            with st.spinner("正在跨章节组卷..."):
+                # 1. 找出该科目下所有的书
+                books = get_books(sid)
+                if not books:
+                    st.error("该科目下没有书籍资料，无法组卷。")
+                else:
+                    book_ids = [b['id'] for b in books]
+                    
+                    # 2. 找出这些书下所有的章节
+                    # Supabase in_ 查询
+                    chaps = supabase.table("chapters").select("id").in_("book_id", book_ids).execute().data
+                    if not chaps:
+                        st.error("书籍内没有章节信息。")
+                    else:
+                        chap_ids = [c['id'] for c in chaps]
+                        
+                        # 3. 从这些章节里随机抽题
+                        # 简单随机：拉取最近 100 道，然后内存 shuffle
+                        raw_qs = supabase.table("question_bank").select("*").in_("chapter_id", chap_ids).limit(100).execute().data
+                        
+                        if len(raw_qs) < limit:
+                            st.warning(f"题库题目不足（当前仅 {len(raw_qs)} 题），无法生成完整试卷。")
+                        else:
+                            random.shuffle(raw_qs)
+                            paper = raw_qs[:limit]
+                            
+                            # 初始化考试会话
+                            st.session_state.exam_session = {
+                                "paper": paper,
+                                "answers": {},
+                                "start_time": time.time(),
+                                "duration": 120 * 60, # 默认2小时
+                                "submitted": False
+                            }
+                            st.rerun()
+
+    # --- B. 考试进行中 ---
     else:
-        # 考试进行中
-        qs = st.session_state.exam['qs']
-        el = int(time.time() - st.session_state.exam['start'])
-        st.markdown(f"<div class='timer-box'>⏳ 已用 {el//60}:{el%60:02d}</div>", unsafe_allow_html=True)
+        session = st.session_state.exam_session
+        paper = session['paper']
         
-        for i, q in enumerate(qs):
-            st.markdown(f"**{i+1}. {q['content']}**")
-            st.session_state.exam['ans'][i] = st.radio("选", q['options'], key=f"e_{i}")
-            st.divider()
+        # 顶部倒计时
+        elapsed = int(time.time() - session['start_time'])
+        remain = session['duration'] - elapsed
         
-        if st.button("交卷"):
+        if remain <= 0:
+            st.error("⏰ 考试结束！")
+            session['submitted'] = True
+        else:
+            rm, rs = divmod(remain, 60)
+            st.markdown(f"""
+            <div style="text-align:center; padding:10px; background:#fff3e0; border-radius:10px; color:#e65100; font-weight:bold; margin-bottom:20px;">
+                ⏳ 剩余时间：{rm:02d}:{rs:02d}
+            </div>
+            """, unsafe_allow_html=True)
+
+        # 题目渲染
+        if not session['submitted']:
+            with st.form("exam_form"):
+                for i, q in enumerate(paper):
+                    st.markdown(f"**{i+1}. {q['content']}**")
+                    # 记录答案
+                    key = f"ex_{i}"
+                    # 简单的单选逻辑
+                    session['answers'][i] = st.radio("选项", q['options'], key=key, label_visibility="collapsed")
+                    st.divider()
+                
+                if st.form_submit_button("交卷"):
+                    session['submitted'] = True
+                    st.rerun()
+        
+        # --- C. 考后报告 ---
+        else:
             score = 0
-            for i, q in enumerate(qs):
-                if st.session_state.exam['ans'][i][0] == q['correct_answer']: score += 10
+            total_score = len(paper) * 10
+            
             st.balloons()
-            st.success(f"得分：{score}")
-            st.session_state.exam = None
+            st.markdown(f"### 📊 考试报告")
+            
+            for i, q in enumerate(paper):
+                user_ans = session['answers'].get(i)
+                # 简单处理：取首字母比较
+                u_val = user_ans[0] if user_ans else ""
+                is_right = (u_val == q['correct_answer'])
+                if is_right: score += 10
+                
+                # 存入历史记录表 (mock_exams) - 略，或可在此处存入 user_answers
+                
+                with st.expander(f"第 {i+1} 题: {'✅' if is_right else '❌'}", expanded=not is_right):
+                    st.write(q['content'])
+                    if not is_right:
+                        st.error(f"你的答案: {u_val}")
+                    st.success(f"正确答案: {q['correct_answer']}")
+                    st.info(q['explanation'])
+
+            st.metric("最终得分", f"{score} / {total_score}")
+            
+            if st.button("退出考场"):
+                st.session_state.exam_session = None
+                st.rerun()
 
 # =========================================================
 # 📊 弱项分析 & ❌ 错题本
 # =========================================================
 elif menu == "📊 弱项分析":
-    st.title("📊 数据分析")
-    ans = supabase.table("user_answers").select("*").eq("user_id", user_id).execute().data
-    if ans:
-        df = pd.DataFrame(ans)
-        fig = px.pie(df, names='is_correct', title="正确率", color_discrete_sequence=['#00C090', '#FF7043'])
-        st.plotly_chart(fig)
-        if st.button("生成 AI 建议"):
-            with st.spinner("AI 分析中..."):
-                r = call_gemini(f"用户做题记录：{len(df)}题，错{len(df[df['is_correct']==False])}题。请给出备考建议。")
-                if r: st.info(r['candidates'][0]['content']['parts'][0]['text'])
-    else: st.info("暂无数据")
+    st.title("📊 学习效果分析")
+    
+    # 1. 获取所有做题记录
+    try:
+        # V3: user_answers 表
+        answers = supabase.table("user_answers").select("*").eq("user_id", user_id).execute().data
+        
+        if not answers:
+            st.info("暂无做题数据，快去刷几道题吧！")
+        else:
+            df = pd.DataFrame(answers)
+            
+            # --- 仪表盘 ---
+            total = len(df)
+            correct = len(df[df['is_correct']==True])
+            rate = int((correct/total)*100) if total>0 else 0
+            
+            c1, c2, c3 = st.columns(3)
+            c1.metric("总刷题量", total)
+            c2.metric("正确率", f"{rate}%")
+            
+            # --- 图表 1: 正确率分布 (Pie) ---
+            fig_pie = px.pie(df, names='is_correct', title='正确率分布', 
+                             color_discrete_sequence=['#00C090', '#FF7043'],
+                             labels={'is_correct': '是否正确'})
+            # 修改标签显示
+            fig_pie.update_traces(textinfo='percent+label')
+            
+            # --- 图表 2: 每日刷题趋势 (Bar) ---
+            df['date'] = pd.to_datetime(df['created_at']).dt.date
+            daily = df.groupby('date').size().reset_index(name='count')
+            fig_bar = px.bar(daily, x='date', y='count', title='每日勤奋度', color_discrete_sequence=['#00C090'])
+            
+            # 布局图表
+            chart1, chart2 = st.columns(2)
+            chart1.plotly_chart(fig_pie, use_container_width=True)
+            chart2.plotly_chart(fig_bar, use_container_width=True)
+            
+            # --- AI 诊断建议 ---
+            st.markdown("### 🩺 AI 诊断")
+            if st.button("生成深度学习建议"):
+                with st.spinner("AI 正在分析你的错题模式..."):
+                    # 简单统计：最近错得多的题目类型（需联表，这里简化为根据正确率生成）
+                    prompt = f"我的做题记录：共{total}题，正确率{rate}%。请像老师一样给出一针见血的复习建议。"
+                    res = call_ai_universal(prompt)
+                    if res:
+                        st.markdown(f"<div class='lesson-content'>{res}</div>", unsafe_allow_html=True)
 
+    except Exception as e:
+        st.error(f"分析加载失败: {e}")
+        
 elif menu == "❌ 错题本":
     st.title("❌ 错题集 & 智能私教")
     
@@ -1190,5 +1332,6 @@ elif menu == "❌ 错题本":
                                         final_history = temp_history + [{"role": "model", "content": ai_reply}]
                                         supabase.table("user_answers").update({"ai_chat_history": final_history}).eq("id", rec_id).execute()
                                         st.rerun()
+
 
 
