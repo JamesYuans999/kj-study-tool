@@ -833,29 +833,29 @@ elif menu == "📚 资料库 (双轨录入)":
                             st.markdown(res)
                             # 这里可以加一个保存按钮，把讲义存入 study_notes 表(需新建)
 # =========================================================
-# 📝 章节特训 (JS计时器 + 进度修复版)
+# 📝 章节特训 (完整修复版：JS计时 + 进度逻辑 + 完整交互)
 # =========================================================
 elif menu == "📝 章节特训 (刷题)":
     st.title("📝 章节突破")
     
-    # --- 1. JS 实时计时器 (黑科技) ---
-    # 只有在 quiz_active 为 True 时才激活
+    # --- 1. JS 实时悬浮计时器 (黑科技) ---
+    # 只有在刷题激活状态下才注入这段 JS
     if st.session_state.get('quiz_active'):
-        # 记录开始时间戳 (如果还没记录)
+        # 记录开始时间戳 (毫秒级，传给 JS)
         if 'js_start_time' not in st.session_state:
-            st.session_state.js_start_time = int(time.time() * 1000) # 毫秒
+            st.session_state.js_start_time = int(time.time() * 1000)
         
-        # 注入 JS 代码
         import streamlit.components.v1 as components
         
+        # 注入的 HTML/JS 代码
         timer_html = f"""
         <div style="
             position: fixed; top: 60px; right: 20px; z-index: 9999;
             background: linear-gradient(45deg, #00C090, #00E6AC);
-            color: white; padding: 10px 25px; border-radius: 30px;
-            font-family: monospace; font-size: 20px; font-weight: bold;
+            color: white; padding: 8px 20px; border-radius: 30px;
+            font-family: monospace; font-size: 18px; font-weight: bold;
             box-shadow: 0 4px 15px rgba(0,192,144, 0.3);
-            display: flex; align-items: center; gap: 10px;
+            display: flex; align-items: center; gap: 8px;
         ">
             <span>⏱️</span> <span id="timer_display">00:00</span>
         </div>
@@ -866,15 +866,17 @@ elif menu == "📝 章节特训 (刷题)":
                 var diff = Math.floor((now - startTime) / 1000);
                 var m = Math.floor(diff / 60).toString().padStart(2, '0');
                 var s = (diff % 60).toString().padStart(2, '0');
-                document.getElementById("timer_display").innerText = m + ":" + s;
+                var el = document.getElementById("timer_display");
+                if (el) el.innerText = m + ":" + s;
             }}
             setInterval(updateTimer, 1000);
             updateTimer();
         </script>
         """
-        components.html(timer_html, height=0) # height=0 隐藏占位符，只显示悬浮窗
+        # height=0 隐藏 iframe 占位符，只显示悬浮窗
+        components.html(timer_html, height=0)
 
-    # --- 2. 章节选择 ---
+    # --- 2. 启动区 (未开始状态) ---
     if not st.session_state.get('quiz_active'):
         subjects = get_subjects()
         if subjects:
@@ -882,6 +884,7 @@ elif menu == "📝 章节特训 (刷题)":
             with c1:
                 s_name = st.selectbox("科目", [s['name'] for s in subjects])
                 sid = next(s['id'] for s in subjects if s['name'] == s_name)
+            
             with c2:
                 chaps = get_chapters(sid, user_id)
                 if chaps:
@@ -890,85 +893,238 @@ elif menu == "📝 章节特训 (刷题)":
                     
                     st.markdown("---")
                     
-                    # === 📊 进度统计 (修复版) ===
+                    # === 📊 进度统计 (精准修复版) ===
                     try:
-                        # A. 查该章节所有题目的 ID
+                        # A. 查该章节所有题目 ID
                         q_res = supabase.table("question_bank").select("id").eq("chapter_id", cid).execute().data
                         chapter_q_ids = [q['id'] for q in q_res]
                         total_q = len(chapter_q_ids)
                         
                         mastered_count = 0
                         if total_q > 0:
-                            # B. 查用户做对的题，且这些题必须属于当前章节
-                            # 技巧：supabase-py 的 in_ 查询
-                            # 为了避免 ID 太多报错，分批或者直接查所有 correct 的再 filter
+                            # B. 查用户做对的所有题目 ID
                             user_correct_res = supabase.table("user_answers").select("question_id").eq("user_id", user_id).eq("is_correct", True).execute().data
-                            
-                            # C. 逻辑求交集 (Python set 运算，最稳妥)
                             user_correct_ids = set([a['question_id'] for a in user_correct_res])
-                            chapter_q_set = set(chapter_q_ids)
                             
-                            # 交集就是：本章已掌握的题
+                            # C. 求交集 (本章 ∩ 已掌握)
+                            chapter_q_set = set(chapter_q_ids)
                             mastered_count = len(user_correct_ids.intersection(chapter_q_set))
                         
-                        # 显示进度条
+                        # 进度条
                         prog = mastered_count / total_q if total_q > 0 else 0
-                        st.write(f"📈 **本章进度**：已掌握 {mastered_count} / 库存 {total_q} 题")
+                        st.caption(f"📈 本章进度：已掌握 {mastered_count} / 库存 {total_q} 题")
                         st.progress(prog)
                         
                     except Exception as e:
-                        st.error(f"统计出错: {e}")
+                        # st.error(f"统计出错: {e}") # 调试时可打开
                         total_q = 0
 
                     st.divider()
                     
-                    # === 启动练习 ===
-                    mode = st.radio("模式", ["🎲 刷真题 (从库存抽)", "🧠 AI 出新题 (基于教材)"], horizontal=True)
+                    # === 🎯 模式选择 ===
+                    mode = st.radio("练习策略", [
+                        "🎲 刷真题 (从库存抽)", 
+                        "🧠 AI 基于教材出新题"
+                    ], horizontal=True)
                     
-                    if st.button("🚀 开始", type="primary", use_container_width=True):
+                    if st.button("🚀 开始练习", type="primary", use_container_width=True):
                         st.session_state.quiz_cid = cid
-                        # 重置 JS 计时器起点
+                        # 重置计时起点
                         st.session_state.js_start_time = int(time.time() * 1000)
                         
+                        # --- 策略 A: 刷真题 ---
                         if "真题" in mode:
                             if total_q == 0:
-                                st.error("没题！请先去资料库录入。")
+                                st.error("该章节题库为空，请先去【资料库】录入真题！")
                             else:
-                                # 随机抽题
-                                qs = supabase.table("question_bank").select("*").eq("chapter_id", cid).limit(20).execute().data
-                                import random
-                                random.shuffle(qs)
-                                st.session_state.quiz_data = qs[:10]
-                                st.session_state.q_idx = 0
-                                st.session_state.quiz_active = True
-                                st.rerun()
+                                # 随机抽取 10 道
+                                qs = supabase.table("question_bank").select("*").eq("chapter_id", cid).limit(50).execute().data
+                                if qs:
+                                    import random
+                                    random.shuffle(qs)
+                                    st.session_state.quiz_data = qs[:10]
+                                    st.session_state.q_idx = 0
+                                    st.session_state.quiz_active = True
+                                    st.rerun()
+                                else:
+                                    st.error("数据加载失败")
+
+                        # --- 策略 B: AI 出题 ---
                         else:
-                            # AI 出题逻辑 (保持之前的一样)
+                            # 1. 获取教材内容
                             mats = supabase.table("materials").select("content").eq("chapter_id", cid).execute().data
                             if not mats:
-                                st.error("没教材！")
+                                st.error("该章节没有上传教材资料！请去【资料库】上传 PDF/Word。")
                             else:
-                                with st.spinner("AI 出题中..."):
-                                    txt = "\n".join([m['content'] for m in mats])
-                                    # ... (调用 call_ai_universal 生成题目) ...
-                                    # 这里为了简洁，请把之前的 AI 出题代码块复制过来
-                                    # 如果你需要，我可以再写一遍
-                                    pass 
+                                full_text = "\n".join([m['content'] for m in mats])
+                                with st.spinner("🤖 AI 正在研读教材并出题..."):
+                                    prompt = f"""
+                                    你是会计出题专家。请基于以下教材内容，生成 3 道单项选择题。
+                                    教材片段：{full_text[:8000]}
+                                    
+                                    要求：
+                                    1. 题目要有一定难度，考察细节。
+                                    2. 必须返回纯 JSON 列表格式，不要 Markdown：
+                                    [
+                                      {{
+                                        "content": "题目描述...",
+                                        "options": ["A.选项1", "B.选项2", "C.选项3", "D.选项4"],
+                                        "correct_answer": "A",
+                                        "explanation": "详细解析..."
+                                      }}
+                                    ]
+                                    """
+                                    # 调用通用 AI 接口
+                                    res = call_ai_universal(prompt)
+                                    
+                                    if res:
+                                        try:
+                                            clean = res.replace("```json","").replace("```","").strip()
+                                            new_qs = json.loads(clean)
+                                            
+                                            # 存入数据库 (变成真题库存)
+                                            db_fmt_qs = [{
+                                                'chapter_id': cid,
+                                                'user_id': user_id,
+                                                'type': 'single',
+                                                'content': x['content'],
+                                                'options': x['options'],
+                                                'correct_answer': x['correct_answer'],
+                                                'explanation': x['explanation'],
+                                                'origin': 'ai_gen'
+                                            } for x in new_qs]
+                                            
+                                            supabase.table("question_bank").insert(db_fmt_qs).execute()
+                                            
+                                            # 载入练习
+                                            st.session_state.quiz_data = new_qs
+                                            st.session_state.q_idx = 0
+                                            st.session_state.quiz_active = True
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"AI 生成格式错误: {e}")
+                                            st.write(res) # 调试用
+                else:
+                    st.warning("该科目下暂无章节，请去资料库新建。")
 
-    # --- 3. 做题界面 (保持之前的逻辑，记得加上 JS 计时器结束处理) ---
+    # --- 3. 做题交互界面 (Active State) ---
     if st.session_state.get('quiz_active'):
-        # ... (题目显示、选项、提交逻辑同上一次给你的代码) ...
-        # 唯一区别：不用再写 Python 的 time.time() 计算了，主要靠 JS 显示
-        # 但提交时，可以用 Python 算一下 elapsed time 存入数据库
+        idx = st.session_state.q_idx
+        data_len = len(st.session_state.quiz_data)
         
-        # (为了篇幅，这里假设你保留了上次的做题交互代码)
-        # 只要确保上面的 JS 注入代码在 if st.session_state.get('quiz_active'): 内部即可
-        pass 
-        
-        # 补全结束按钮
-        if st.sidebar.button("🏁 结束练习 (返回)"):
-             st.session_state.quiz_active = False
-             st.rerun()
+        # 确保索引不越界
+        if idx >= data_len:
+            st.balloons()
+            st.success("本轮练习完成！")
+            if st.button("返回菜单"):
+                st.session_state.quiz_active = False
+                st.rerun()
+        else:
+            q = st.session_state.quiz_data[idx]
+            
+            # 顶部导航栏
+            c_prog, c_end = st.columns([5, 1])
+            with c_prog:
+                st.progress((idx + 1) / data_len)
+                st.caption(f"进度：{idx + 1} / {data_len}")
+            with c_end:
+                if st.button("🏁 结束"):
+                    st.session_state.quiz_active = False
+                    st.rerun()
+
+            # 字段兼容 (应对 DB 和 AI 生成的不同 key)
+            q_text = q.get('content') or q.get('question')
+            q_ans = q.get('correct_answer') or q.get('answer')
+            q_exp = q.get('explanation', '暂无解析')
+            q_opts = q.get('options', [])
+
+            # 题目卡片
+            st.markdown(f"""
+            <div class='css-card'>
+                <h4>Q{idx+1}: {q_text}</h4>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # 选项
+            sel = st.radio("请选择答案：", q_opts, key=f"quiz_radio_{idx}")
+            
+            # 状态控制 (防止刷新重置)
+            submit_key = f"submit_state_{idx}"
+            if submit_key not in st.session_state: st.session_state[submit_key] = False
+            
+            if st.button("✅ 提交答案", use_container_width=True) and not st.session_state[submit_key]:
+                st.session_state[submit_key] = True
+            
+            # --- 判分与解析展示 ---
+            if st.session_state[submit_key]:
+                user_val = sel[0] if sel else ""
+                
+                # 1. 判分
+                if user_val == q_ans:
+                    st.markdown(f"<div class='success-box'>🎉 回答正确！</div>", unsafe_allow_html=True)
+                    # (可选) 标记为已掌握
+                    # if q.get('id'): supabase.table("user_answers").update({"is_correct": True}).eq("question_id", q['id']).execute()
+                else:
+                    st.error(f"❌ 遗憾答错。正确答案是：{q_ans}")
+                    
+                    # 2. 存错题 (防重复逻辑)
+                    if q.get('id'):
+                        try:
+                            # 查重
+                            exist = supabase.table("user_answers").select("id").eq("user_id", user_id).eq("question_id", q['id']).eq("is_correct", False).execute().data
+                            if exist:
+                                # 更新时间
+                                supabase.table("user_answers").update({"created_at": datetime.datetime.now().isoformat()}).eq("id", exist[0]['id']).execute()
+                            else:
+                                # 插入
+                                supabase.table("user_answers").insert({
+                                    "user_id": user_id,
+                                    "question_id": q['id'],
+                                    "user_response": user_val,
+                                    "is_correct": False
+                                }).execute()
+                        except: pass
+                
+                # 3. 解析
+                st.info(f"💡 **解析：** {q_exp}")
+                
+                # 4. AI 举例功能
+                chat_key = f"quiz_chat_{idx}"
+                if chat_key not in st.session_state: st.session_state[chat_key] = []
+                
+                if st.button("🤔 不理解？举个生活例子"):
+                    with st.spinner("AI 思考中..."):
+                        p = f"解释会计题：{q_text}。答案{q_ans}。解析{q_exp}。用生活案例比喻。"
+                        res = call_ai_universal(p)
+                        if res: st.session_state[chat_key].append({"role":"model", "content":res})
+                
+                for msg in st.session_state[chat_key]:
+                    css = "chat-ai" if msg['role'] == "model" else "chat-user"
+                    st.markdown(f"<div class='{css}'>{msg['content']}</div>", unsafe_allow_html=True)
+                
+                # 追问
+                if st.session_state[chat_key]:
+                    q_ask = st.text_input("追问...", key=f"q_ask_{idx}")
+                    if st.button("发送", key=f"q_send_{idx}") and q_ask:
+                        st.session_state[chat_key].append({"role":"user", "content":q_ask})
+                        with st.spinner("..."):
+                            r = call_ai_universal(q_ask, history=st.session_state[chat_key][:-1])
+                            st.session_state[chat_key].append({"role":"model", "content":r})
+                            st.rerun()
+
+                st.markdown("---")
+                
+                # 5. 下一题
+                if st.button("➡️ 下一题", use_container_width=True):
+                    if idx < data_len - 1:
+                        st.session_state.q_idx += 1
+                        st.rerun()
+                    else:
+                        st.balloons()
+                        st.success("本轮结束！")
+                        if st.button("返回章节菜单"):
+                            st.session_state.quiz_active = False
+                            st.rerun()
 # =========================================================
 # ⚔️ 全真模考
 # =========================================================
@@ -1152,6 +1308,7 @@ elif menu == "❌ 错题本":
                                         final_history = temp_history + [{"role": "model", "content": ai_reply}]
                                         supabase.table("user_answers").update({"ai_chat_history": final_history}).eq("id", rec_id).execute()
                                         st.rerun()
+
 
 
 
