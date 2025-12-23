@@ -1447,25 +1447,49 @@ elif menu == "❌ 错题本":
                 for m in h:
                     st.markdown(f"<div class='chat-{'ai' if m['role']=='model' else 'user'}'>{m['content']}</div>", unsafe_allow_html=True)
 
-# === ⚙️ 设置中心 ===
+# =========================================================
+# ⚙️ 设置中心 (V3.1 修复版：配置回显 + 连通测试 + 考期同步)
+# =========================================================
 elif menu == "⚙️ 设置中心":
-    st.title("⚙️ 设置")
-    # 连通测试
-    if st.button("📡 测试 AI"):
-        r = call_ai_universal("Hi")
-        if "Error" in r: st.error(r)
-        else: st.success(f"连接成功: {r}")
-        
-    # 超时
-    to = st.slider("超时时间", 10, 300, 60)
-    if st.button("保存设置"):
-        update_settings(user_id, {"ai_timeout": to})
-        st.success("已保存")
+    st.title("⚙️ 系统设置")
     
-    st.divider()
-    if st.button("🗑️ 清空所有数据"):
-        supabase.table("user_answers").delete().eq("user_id", user_id).execute()
-        st.success("已清空")
+    # 1. 读取云端配置 (核心修复)
+    # 必须先从 profile 里读出来，否则滑块永远是默认值
+    current_settings = profile.get('settings') or {}
+    saved_timeout = current_settings.get('ai_timeout', 60) # 读不到就默认60
+    
+    # --- A. AI 模型参数 ---
+    st.markdown("#### 🤖 AI 参数配置")
+    
+    col_test, col_set = st.columns([1, 2])
+    
+    with col_test:
+        st.info(f"当前通道：**{st.session_state.get('selected_provider')}**")
+        # 连通性测试功能
+        if st.button("📡 测试 AI 连通性"):
+            with st.spinner("发送 Hello World..."):
+                start_t = time.time()
+                res = call_ai_universal("Say 'OK' in one word.", timeout_override=10)
+                cost_t = time.time() - start_t
+                
+                if "Error" in res or "异常" in res:
+                    st.error(f"❌ 失败: {res}")
+                else:
+                    st.success(f"✅ 通畅! 耗时 {cost_t:.2f}s")
+                    st.caption(f"回复: {res}")
+
+    with col_set:
+        # 修复：value 设置为 saved_timeout (从数据库读)
+        new_timeout = st.slider(
+            "⏳ AI 回答超时限制 (秒)", 
+            min_value=10, 
+            max_value=300, 
+            value=saved_timeout, 
+            help="如果是生成整章讲义或全量入库，建议调大此值 (如 120秒)"
+        )
+        
+        if
+
 
 
 
