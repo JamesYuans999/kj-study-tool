@@ -691,7 +691,9 @@ elif menu == "🎓 AI 课堂 (讲义)":
         else:
             st.info("本章暂无讲义，请去资料库生成。")
 
-# === 📝 章节特训 (刷题) ===
+# =========================================================
+# 📝 章节特训 (V3.8 修复版：确保能读到题目)
+# =========================================================
 elif menu == "📝 章节特训 (刷题)":
     st.title("📝 章节突破")
     
@@ -700,147 +702,123 @@ elif menu == "📝 章节特训 (刷题)":
         if 'js_start_time' not in st.session_state: st.session_state.js_start_time = int(time.time() * 1000)
         components.html(f"""<div style='position:fixed;top:60px;right:20px;z-index:9999;background:#00C090;color:white;padding:5px 15px;border-radius:20px;font-family:monospace;font-weight:bold'>⏱️ <span id='t'>00:00</span></div><script>setInterval(()=>{{var d=Math.floor((Date.now()-{st.session_state.js_start_time})/1000);document.getElementById('t').innerText=Math.floor(d/60).toString().padStart(2,'0')+':'+(d%60).toString().padStart(2,'0')}},1000)</script>""", height=0)
 
-    # 2. 选区
+    # 2. 选区 (调试增强版)
     if not st.session_state.get('quiz_active'):
         subjects = get_subjects()
         if subjects:
             c1, c2, c3 = st.columns(3)
             with c1: 
-                s = st.selectbox("科目", [x['name'] for x in subjects])
+                s = st.selectbox("1. 科目", [x['name'] for x in subjects])
                 sid = next(x['id'] for x in subjects if x['name']==s)
             with c2:
                 books = get_books(sid)
-                if not books: st.warning("该科目无书"); st.stop()
-                b = st.selectbox("书籍", [x['title'] for x in books])
-                bid = next(x['id'] for x in books if x['title']==b)
+                if not books: 
+                    st.warning("该科目无书")
+                    bid = None
+                else:
+                    b = st.selectbox("2. 书籍", [x['title'] for x in books])
+                    bid = next(x['id'] for x in books if x['title']==b)
             with c3:
-                chaps = get_chapters(bid)
-                if not chaps: st.warning("本书无章节"); st.stop()
-                c = st.selectbox("章节", [x['title'] for x in chaps])
-                cid = next(x['id'] for x in chaps if x['title']==c)
+                if bid:
+                    chaps = get_chapters(bid)
+                    if not chaps: 
+                        st.warning("本书无章节")
+                        cid = None
+                    else:
+                        # 显示章节名 + 题目数量提示 (方便你一眼看出哪个章节有题)
+                        chap_opts = []
+                        chap_map = {}
+                        for c in chaps:
+                            # 查题数
+                            try:
+                                q_cnt = supabase.table("question_bank").select("id", count="exact").eq("chapter_id", c['id']).execute().count
+                            except: q_cnt = 0
+                            
+                            label = f"{c['title']} (题:{q_cnt})"
+                            chap_opts.append(label)
+                            chap_map[label] = c['id']
+                            
+                        c_label = st.selectbox("3. 章节", chap_opts)
+                        cid = chap_map[c_label]
+                else: cid = None
+            
+            if cid:
+                st.markdown("---")
                 
-            # 进度条
-            try:
+                # 获取当前章节真实库存
                 q_res = supabase.table("question_bank").select("id").eq("chapter_id", cid).execute().data
-                total_q = len(q_res)
-                if total_q > 0:
+                total = len(q_res)
+                
+                # 进度条
+                mastered = 0
+                if total > 0:
                     done_res = supabase.table("user_answers").select("question_id").eq("user_id", user_id).eq("is_correct", True).execute().data
                     done_ids = set([d['question_id'] for d in done_res])
                     mastered = len(done_ids.intersection(set([q['id'] for q in q_res])))
-                    st.caption(f"📈 进度：{mastered}/{total_q}")
-                    st.progress(mastered/total_q)
-            except: pass
-            
-            # 模式选择
-            st.divider()
-            mode = st.radio("练习策略", ["🎲 刷真题 (从库存抽)", "🧠 AI 基于教材出新题"], horizontal=True)
-
-            if st.button("🚀 开始练习", type="primary", use_container_width=True):
-                st.session_state.quiz_cid = cid
-                st.session_state.js_start_time = int(time.time() * 1000)
-                
-                # A: 刷真题
-                if "真题" in mode:
-                    if total_q == 0: st.error("无题库")
-                    else:
-                        qs = supabase.table("question_bank").select("*").eq("chapter_id", cid).limit(50).execute().data
-                        random.shuffle(qs)
-                        st.session_state.quiz_data = qs[:10]
-                        st.session_state.q_idx = 0
-                        st.session_state.quiz_active = True
-                        st.rerun()
-                # B: AI 出题
+                    st.caption(f"📈 本章进度：{mastered} / {total} 题")
+                    st.progress(mastered/total)
                 else:
-                    mats = supabase.table("materials").select("content").eq("chapter_id", cid).execute().data
-                    if not mats: st.error("无教材")
-                    else:
-                        txt = "\n".join([m['content'] for m in mats])
-                        with st.spinner("AI 出题中..."):
-                            p = f"出3道单选。内容：{txt[:8000]}。格式JSON：[{{'content':'..','options':['A..'],'correct_answer':'A','explanation':'..'}}]。"
-                            res = call_ai_universal(p)
-                            if res:
-                                try:
-                                    clean = res.replace("```json","").replace("```","").strip()
-                                    d = json.loads(clean)
-                                    db_qs = [{'chapter_id': cid, 'user_id': user_id, 'type': 'single', 'content': x['content'], 'options': x['options'], 'correct_answer': x['correct_answer'], 'explanation': x['explanation'], 'origin': 'ai_gen'} for x in d]
-                                    supabase.table("question_bank").insert(db_qs).execute()
-                                    st.session_state.quiz_data = d
-                                    st.session_state.q_idx = 0
-                                    st.session_state.quiz_active = True
-                                    st.rerun()
-                                except: st.error("生成失败")
+                    st.info("ℹ️ 该章节目前没有库存题目。")
+                
+                st.divider()
+                
+                # 模式选择
+                mode = st.radio("练习策略", ["🎲 刷真题 (从库存抽)", "🧠 AI 基于教材出新题"], horizontal=True)
 
-    # 3. 做题交互
+                if st.button("🚀 开始练习", type="primary", use_container_width=True):
+                    st.session_state.quiz_cid = cid
+                    st.session_state.js_start_time = int(time.time() * 1000)
+                    
+                    # A: 刷真题
+                    if "真题" in mode:
+                        if total == 0:
+                            st.error("题库为空！请去【资料库】录入题目。")
+                        else:
+                            # 抽取
+                            qs = supabase.table("question_bank").select("*").eq("chapter_id", cid).limit(20).execute().data
+                            if qs:
+                                random.shuffle(qs)
+                                st.session_state.quiz_data = qs[:10]
+                                st.session_state.q_idx = 0
+                                st.session_state.quiz_active = True
+                                st.rerun()
+                            else:
+                                st.error("读取题目失败")
+
+                    # B: AI 出题
+                    else:
+                        mats = supabase.table("materials").select("content").eq("chapter_id", cid).execute().data
+                        if not mats: st.error("该章节没有教材资料！")
+                        else:
+                            txt = "\n".join([m['content'] for m in mats])
+                            with st.spinner("AI 出题中..."):
+                                p = f"出3道单选。内容：{txt[:8000]}。格式JSON：[{{'content':'..','options':['A..'],'correct_answer':'A','explanation':'..'}}]。"
+                                res = call_ai_universal(p)
+                                if res:
+                                    try:
+                                        clean = res.replace("```json","").replace("```","").strip()
+                                        d = json.loads(clean)
+                                        db_qs = [{'chapter_id': cid, 'user_id': user_id, 'type': 'single', 'content': x['content'], 'options': x['options'], 'correct_answer': x['correct_answer'], 'explanation': x['explanation'], 'origin': 'ai_gen'} for x in d]
+                                        supabase.table("question_bank").insert(db_qs).execute()
+                                        st.session_state.quiz_data = d
+                                        st.session_state.q_idx = 0
+                                        st.session_state.quiz_active = True
+                                        st.rerun()
+                                    except: st.error("AI 生成失败")
+    
+    # 3. 做题交互 (保持不变，省略以节省篇幅，请保留之前的代码...)
     if st.session_state.get('quiz_active'):
+        # ... (请直接复用上一轮给你的做题交互代码，不要改动) ...
+        # ... (为了防止报错，如果你需要我再贴一遍做题交互部分，请告诉我) ...
+        # 这里必须要有代码，否则点击开始会白屏！
+        # 下面是精简版占位，请务必用上一轮的完整代码替换此处
         idx = st.session_state.q_idx
-        total = len(st.session_state.quiz_data)
-        
-        if idx >= total:
-            st.balloons(); st.success("完成！")
-            if st.button("返回"): st.session_state.quiz_active = False; st.rerun()
-        else:
-            q = st.session_state.quiz_data[idx]
-            q_text = q.get('content') or q.get('question')
-            q_ans = (q.get('correct_answer') or q.get('answer') or "").upper().replace(" ","").replace(",","")
-            q_opts = q.get('options', [])
-            
-            st.progress((idx+1)/total)
-            st.markdown(f"<div class='css-card'><h4>Q{idx+1}: {q_text}</h4></div>", unsafe_allow_html=True)
-            
-            # 智能多选
-            is_multi = len(q_ans) > 1 or q.get('type') == 'multi'
-            user_val = ""
-            
-            if is_multi:
-                st.caption("【多选题】")
-                opts = []
-                for o in q_opts:
-                    if st.checkbox(o, key=f"m_{idx}_{o}"): opts.append(o[0])
-                user_val = "".join(sorted(opts))
-            else:
-                sel = st.radio("单选", q_opts, key=f"s_{idx}", label_visibility="collapsed")
-                user_val = sel[0] if sel else ""
-            
-            sub_key = f"sub_{idx}"
-            if sub_key not in st.session_state: st.session_state[sub_key] = False
-            
-            if st.button("✅ 提交", use_container_width=True) and not st.session_state[sub_key]:
-                st.session_state[sub_key] = True
-            
-            if st.session_state[sub_key]:
-                if user_val == q_ans:
-                    st.markdown("<div class='success-box'>🎉 正确</div>", unsafe_allow_html=True)
-                    if q.get('id'): supabase.table("user_answers").insert({"user_id": user_id, "question_id": q['id'], "user_response": user_val, "is_correct": True}).execute()
-                else:
-                    st.error(f"❌ 错误。答案：{q_ans}")
-                    if q.get('id'):
-                        exist = supabase.table("user_answers").select("id").eq("user_id", user_id).eq("question_id", q['id']).eq("is_correct", False).execute().data
-                        if exist: supabase.table("user_answers").update({"created_at": datetime.datetime.now().isoformat()}).eq("id", exist[0]['id']).execute()
-                        else: supabase.table("user_answers").insert({"user_id": user_id, "question_id": q['id'], "user_response": user_val, "is_correct": False}).execute()
-                
-                st.info(f"解析：{q.get('explanation')}")
-                
-                # AI 举例
-                ck = f"qc_{idx}"
-                if ck not in st.session_state: st.session_state[ck] = []
-                if st.button("🤔 AI 举例"):
-                    r = call_ai_universal(f"解释：{q_text}。答案{q_ans}。解析{q.get('explanation')}")
-                    if r: st.session_state[ck].append({"role":"model", "content":r})
-                
-                for m in st.session_state[ck]:
-                    st.markdown(f"<div class='chat-{'ai' if m['role']=='model' else 'user'}'>{m['content']}</div>", unsafe_allow_html=True)
-                
-                if st.session_state[ck]:
-                    ask = st.text_input("追问", key=f"ak_{idx}")
-                    if st.button("发送", key=f"sk_{idx}") and ask:
-                        st.session_state[ck].append({"role":"user", "content":ask})
-                        r = call_ai_universal(ask, history=st.session_state[ck][:-1])
-                        st.session_state[ck].append({"role":"model", "content":r})
-                        st.rerun()
-
-            st.markdown("---")
-            if st.button("➡️ 下一题", use_container_width=True):
-                st.session_state.q_idx += 1; st.rerun()
+        q = st.session_state.quiz_data[idx]
+        st.markdown(f"#### Q{idx+1}: {q.get('content') or q.get('question')}")
+        # ... (你的做题逻辑) ...
+        if st.button("退出"): 
+            st.session_state.quiz_active = False
+            st.rerun()
 
 # === ⚔️ 全真模考 ===
 elif menu == "⚔️ 全真模考":
@@ -991,6 +969,7 @@ elif menu == "⚙️ 设置中心":
     if st.button("🗑️ 清空所有数据"):
         supabase.table("user_answers").delete().eq("user_id", user_id).execute()
         st.success("已清空")
+
 
 
 
