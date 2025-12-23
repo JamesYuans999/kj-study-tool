@@ -296,7 +296,7 @@ def extract_docx(file):
     except: return ""
 
 # ==============================================================================
-# 4. 侧边栏与导航 (还原多模型选择)
+# 4. 侧边栏与导航 (修复版：统一菜单名称)
 # ==============================================================================
 profile = get_user_profile(user_id)
 settings = profile.get('settings') or {}
@@ -305,7 +305,7 @@ with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", width=50)
     st.markdown("### 会计私教 Pro")
     
-    # --- AI 设置 (记忆版) ---
+    # --- AI 设置 (保持不变) ---
     provs = ["Gemini (官方直连)", "DeepSeek (官方直连)", "OpenRouter (聚合平台)"]
     saved_p = settings.get('last_provider')
     idx_p = 0
@@ -320,9 +320,7 @@ with st.sidebar:
     
     if "Gemini" in prov:
         opts = fetch_google_models(st.secrets["GOOGLE_API_KEY"]) or ["gemini-1.5-flash"]
-        # 兼容旧配置可能存在的不同格式
-        idx_m = 0
-        if saved_m in opts: idx_m = opts.index(saved_m)
+        idx_m = opts.index(saved_m) if saved_m in opts else 0
         st.session_state.google_model_id = st.selectbox("🔌 模型", opts, index=idx_m, key="gl_model_select", on_change=save_ai_pref)
         
     elif "DeepSeek" in prov:
@@ -346,19 +344,22 @@ with st.sidebar:
 
     st.divider()
     
-    # --- 导航 ---
-    menu = st.radio("功能导航", [
+    # --- 导航菜单 (关键修改点：名字与下方主逻辑严格一致) ---
+    # 定义菜单列表
+    MENU_OPTIONS = [
         "🏠 仪表盘",
         "📂 智能拆书 & 资料",
         "🎓 AI 课堂 (讲义)",
-        "📝 章节特训",
+        "📝 章节特训",    # 注意：这里去掉了"(刷题)"
         "⚔️ 全真模考",
         "📊 弱项分析",
         "❌ 错题本",
         "⚙️ 设置中心"
-    ], label_visibility="collapsed")
+    ]
     
-    # --- 倒计时 (跨年逻辑) ---
+    menu = st.radio("功能导航", MENU_OPTIONS, label_visibility="collapsed")
+    
+    # --- 倒计时 ---
     if profile.get('exam_date'):
         try:
             target = datetime.datetime.strptime(profile['exam_date'], '%Y-%m-%d').date()
@@ -371,6 +372,7 @@ with st.sidebar:
                 days = (target - today).days
                 st.metric("⏳ 距离考试", f"{days} 天", delta="冲刺" if days<30 else "稳住")
         except: pass
+
 # ==============================================================================
 # 5. 各页面主逻辑 (V3.0 完整复刻版)
 # ==============================================================================
@@ -1143,6 +1145,7 @@ elif menu == "⚙️ 设置中心":
     if st.button("🗑️ 清空所有数据"):
         supabase.table("user_answers").delete().eq("user_id", user_id).execute()
         st.success("已清空")
+
 
 
 
