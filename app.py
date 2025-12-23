@@ -1488,8 +1488,66 @@ elif menu == "⚙️ 设置中心":
             help="如果是生成整章讲义或全量入库，建议调大此值 (如 120秒)"
         )
         
-        if
+        if st.button("💾 保存参数"):
+            if new_timeout != saved_timeout:
+                update_settings(user_id, {"ai_timeout": new_timeout})
+                st.success(f"已保存！超时限制改为 {new_timeout} 秒")
+                time.sleep(1)
+                st.rerun() # 强制刷新页面，让变量生效
+            else:
+                st.info("配置未变更")
 
+    st.divider()
+    
+    # --- B. 考试时间设置 (保留联网功能) ---
+    st.markdown("#### 📅 考试倒计时")
+    
+    # 自动同步
+    if st.button("🌐 联网推测 2025 考试日期 (AI)"):
+        with st.spinner("正在分析历史考情..."):
+            # 模拟 AI 决策
+            p = f"根据中国会计资格评价中心惯例，推测 {datetime.date.today().year} 年中级会计考试日期。仅返回 YYYY-MM-DD 格式。"
+            ai_date = call_ai_universal(p)
+            try:
+                clean_d = ai_date.strip()[:10]
+                # 简单校验格式
+                datetime.datetime.strptime(clean_d, '%Y-%m-%d')
+                
+                supabase.table("study_profile").update({"exam_date": clean_d}).eq("user_id", user_id).execute()
+                st.success(f"已更新为: {clean_d}")
+                time.sleep(1)
+                st.rerun()
+            except:
+                st.warning("AI 返回日期格式有误，请手动设置")
+
+    # 手动设置
+    curr_date = datetime.date(2025, 9, 6)
+    if profile.get('exam_date'):
+        try: curr_date = datetime.datetime.strptime(profile['exam_date'], '%Y-%m-%d').date()
+        except: pass
+        
+    set_date = st.date_input("手动设定目标日期", curr_date)
+    if set_date != curr_date:
+        supabase.table("study_profile").update({"exam_date": str(set_date)}).eq("user_id", user_id).execute()
+        st.toast("日期已更新")
+        time.sleep(1)
+        st.rerun()
+
+    st.divider()
+    
+    # --- C. 危险区域 ---
+    with st.expander("🗑️ 危险操作 (数据清理)"):
+        c_del1, c_del2 = st.columns(2)
+        with c_del1:
+            if st.button("清空所有错题记录"):
+                supabase.table("user_answers").delete().eq("user_id", user_id).execute()
+                st.success("错题本已清空")
+                
+        with c_del2:
+            if st.button("清空所有书籍资料"):
+                supabase.table("books").delete().eq("user_id", user_id).execute()
+                # 因为设置了级联删除(Cascade)，章节、题目、内容会自动删除
+                st.success("资料库已格式化")
 
 
 
