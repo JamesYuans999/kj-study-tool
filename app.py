@@ -821,27 +821,83 @@ elif menu == "📂 智能拆书 & 资料":
     # 已有书籍管理 (保持不变)
     elif books:
         bid = book_map[sel_book_label]
+        
+        # 获取当前书籍信息
+        curr_book_info = next((b for b in books if b['id'] == bid), {})
+        
         c_tit, c_act = st.columns([5, 1])
-        with c_tit: st.markdown(f"### 📘 {sel_book_label.split(' (ID')[0]}")
+        with c_tit: 
+            st.markdown(f"### 📘 {curr_book_info.get('title', '未知书籍')}")
         with c_act:
-            if st.button("🗑️ 删除本书"):
+            if st.button("🗑️ 删除本书", type="primary"):
                 try:
                     supabase.table("books").delete().eq("id", bid).execute()
                     st.toast("书籍已删除")
                     time.sleep(1); st.rerun()
                 except: st.error("删除失败")
         
+        # --- 🔧 新增功能：书籍设置 (移动/重命名) ---
+        with st.expander("🔧 书籍设置 (修正科目 / 重命名)"):
+            c_set1, c_set2, c_set3 = st.columns([2, 2, 1])
+            
+            with c_set1:
+                new_title = st.text_input("📖 书籍名称", value=curr_book_info.get('title', ''))
+            
+            with c_set2:
+                # 获取所有可用科目
+                all_subs = get_subjects()
+                all_sub_names = [s['name'] for s in all_subs]
+                # 当前科目索引
+                curr_sub_idx = all_sub_names.index(s_name) if s_name in all_sub_names else 0
+                target_sub_name = st.selectbox("🔀 归属科目", all_sub_names, index=curr_sub_idx, help="选错科目了？在这里修改，无需重新上传。")
+            
+            with c_set3:
+                st.write("") # 占位排版
+                st.write("") 
+                if st.button("💾 保存变更"):
+                    try:
+                        target_sid = next(s['id'] for s in all_subs if s['name'] == target_sub_name)
+                        
+                        supabase.table("books").update({
+                            "title": new_title,
+                            "subject_id": target_sid
+                        }).eq("id", bid).execute()
+                        
+                        st.success("✅ 修改成功！书籍已迁移。")
+                        if target_sid != sid:
+                            st.info("⚠️ 由于你修改了科目，书籍已从当前列表消失，请切换到新科目查看。")
+                        time.sleep(2)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"修改失败: {e}")
+
+        st.divider()
+
+        # --- 下方章节列表 (保持不变) ---
         chapters = get_chapters(bid)
         if not chapters: st.info("本书暂无章节")
         else:
             for chap in chapters:
-                q_cnt = supabase.table("question_bank").select("id", count="exact").eq("chapter_id", chap['id']).execute().count
-                m_cnt = supabase.table("materials").select("id", count="exact").eq("chapter_id", chap['id']).execute().count
-                with st.expander(f"📑 {chap['title']} (题:{q_cnt} | 教材:{'有' if m_cnt else '无'})"):
-                    if st.button("🗑️ 清空", key=f"del_c_{chap['id']}"):
-                        supabase.table("materials").delete().eq("chapter_id", chap['id']).execute()
-                        supabase.table("question_bank").delete().eq("chapter_id", chap['id']).execute()
-                        st.rerun()
+                # 统计信息
+                try:
+                    q_cnt = supabase.table("question_bank").select("id", count="exact").eq("chapter_id", chap['id']).execute().count
+                except: q_cnt = 0
+                
+                try:
+                    m_cnt = supabase.table("materials").select("id", count="exact").eq("chapter_id", chap['id']).execute().count
+                except: m_cnt = 0
+                
+                with st.expander(f"📑 {chap['title']} (题库: {q_cnt} | 教材: {'✅' if m_cnt else '❌'})"):
+                    c_op1, c_op2 = st.columns([1, 5])
+                    with c_op1:
+                        if st.button("🗑️ 清空", key=f"del_c_{chap['id']}", help="清空该章节下的所有题目和教材"):
+                            supabase.table("materials").delete().eq("chapter_id", chap['id']).execute()
+                            supabase.table("question_bank").delete().eq("chapter_id", chap['id']).execute()
+                            st.toast(f"{chap['title']} 数据已清空")
+                            time.sleep(1)
+                            st.rerun()
+                    with c_op2:
+                        st.caption(f"页码范围: P{chap['start_page']} - P{chap['end_page']}")
 
 # =========================================================
 # 📝 章节特训 (V6.3: 完整逻辑修复版 - 含数据库查询与主观题支持)
@@ -1733,6 +1789,7 @@ elif menu == "⚙️ 设置中心":
                 supabase.table("books").delete().eq("user_id", user_id).execute()
                 # 因为设置了级联删除(Cascade)，章节、题目、内容会自动删除
                 st.success("资料库已格式化")
+
 
 
 
