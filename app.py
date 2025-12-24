@@ -494,7 +494,7 @@ if menu == "🏠 仪表盘":
         """, unsafe_allow_html=True)
 
 # =========================================================
-# 📂 智能拆书 & 资料 (V6.1: 修复变量作用域 + 提示词控制)
+# 📂 智能拆书 & 资料 (V6.2: 修复 API 超限报错导致的解析异常)
 # =========================================================
 elif menu == "📂 智能拆书 & 资料":
     st.title("📂 资料库管理 (Pro)")
@@ -592,21 +592,41 @@ elif menu == "📂 智能拆书 & 资料":
                                 toc_txt = extract_pdf(up_file, ts, te)
                                 full_p = f"{user_toc_prompt}\n\n目录文本：\n{toc_txt[:10000]}"
                                 
+                                # 调用 AI
                                 res = call_ai_universal(full_p)
-                                if res:
+                                
+                                # === 🛡️ 新增：错误检测与数据校验 ===
+                                if not res:
+                                    st.error("AI 未返回任何内容，请检查网络。")
+                                elif "QuotaFailure" in res or "429" in res:
+                                    st.error("⚠️ Google API 调用过于频繁 (Quota Exceeded)。\n请休息 1 分钟后再试，或在左侧切换至 DeepSeek / OpenRouter。")
+                                else:
                                     try:
                                         clean = res.replace("```json","").replace("```","").strip()
                                         s = clean.find('['); e = clean.rfind(']')+1
+                                        if s == -1 or e == -1: raise ValueError("未找到有效 JSON 列表")
+                                        
                                         data = json.loads(clean[s:e])
-                                        # 预填答案页
-                                        for row in data:
-                                            row['ans_start_page'] = as_page if "文件末尾" in ans_mode else 0
-                                            row['ans_end_page'] = total_pages if "文件末尾" in ans_mode else 0
+                                        
+                                        # 核心校验：如果列表里的对象没有 'title'，说明解析到了错误信息
+                                        if not isinstance(data, list) or len(data) == 0 or 'title' not in data[0]:
+                                            st.error("❌ AI 返回的数据格式异常 (可能是 API 报错信息被误读)。")
+                                            with st.expander("查看 AI 原始返回 (用于调试)"):
+                                                st.text(res)
+                                            # 终止后续流程，防止脏数据进入 Step 2
+                                        else:
+                                            # 预填答案页
+                                            for row in data:
+                                                row['ans_start_page'] = as_page if "文件末尾" in ans_mode else 0
+                                                row['ans_end_page'] = total_pages if "文件末尾" in ans_mode else 0
 
-                                        st.session_state.toc_result = data
-                                        st.session_state.ans_mode_cache = ans_mode
-                                        st.rerun()
-                                    except: st.error("AI 解析失败，请检查提示词或目录范围。")
+                                            st.session_state.toc_result = data
+                                            st.session_state.ans_mode_cache = ans_mode
+                                            st.rerun()
+                                    except Exception as e: 
+                                        st.error(f"AI 解析失败: {e}")
+                                        with st.expander("查看 AI 原始返回"):
+                                            st.text(res)
 
                 # --- Step 2: 确认结构 ---
                 if 'toc_result' in st.session_state:
@@ -618,7 +638,6 @@ elif menu == "📂 智能拆书 & 资料":
                             del st.session_state.toc_result
                             st.rerun()
 
-                    # 从缓存获取 ans_mode
                     cached_ans_mode = st.session_state.get('ans_mode_cache', '无')
 
                     col_cfg = {
@@ -630,7 +649,13 @@ elif menu == "📂 智能拆书 & 资料":
                         col_cfg["ans_start_page"] = st.column_config.NumberColumn("答案起始", format="%d")
                         col_cfg["ans_end_page"] = st.column_config.NumberColumn("答案结束", format="%d")
 
-                    edited_df = st.data_editor(st.session_state.toc_result, column_config=col_cfg, num_rows="dynamic", use_container_width=True)
+                    # 这里如果数据还是有问题，data_editor 可能会报错，但上面的校验已经拦截了大部分情况
+                    try:
+                        edited_df = st.data_editor(st.session_state.toc_result, column_config=col_cfg, num_rows="dynamic", use_container_width=True)
+                    except:
+                        st.error("数据状态异常，请点击“重做第一步”刷新。")
+                        del st.session_state.toc_result
+                        st.stop()
                     
                     # --- Step 3: 提取与入库 (含主观题提示词控制) ---
                     if "习题库" in doc_type:
@@ -689,7 +714,10 @@ elif menu == "📂 智能拆书 & 资料":
                                 
                                 with st.spinner("AI 正在根据您的指令提取..."):
                                     res = call_ai_universal(full_p)
-                                    if res:
+                                    # 预览时同样的错误校验
+                                    if "QuotaFailure" in str(res):
+                                        st.error("⚠️ Google API 额度超限，请稍候再试。")
+                                    elif res:
                                         cln = res.replace("```json","").replace("```","").strip()
                                         s = cln.find('['); e = cln.rfind(']')+1
                                         st.session_state.preview_data = json.loads(cln[s:e])
@@ -726,7 +754,6 @@ elif menu == "📂 智能拆书 & 资料":
                                         up_file.seek(0)
                                         txt = extract_pdf(up_file, c_s, c_e)
                                         
-                                        # 修复：使用 cached_ans_mode
                                         if "文件末尾" in cached_ans_mode:
                                             a_s = int(float(row['ans_start_page']))
                                             a_e = int(float(row['ans_end_page']))
@@ -739,7 +766,7 @@ elif menu == "📂 智能拆书 & 资料":
                                         final_p = f"{user_extract_prompt}\n\n文本：\n{txt[:40000]}"
                                         r = call_ai_universal(final_p, timeout_override=300)
                                         
-                                        if r:
+                                        if r and "QuotaFailure" not in str(r):
                                             try:
                                                 cln = r.replace("```json","").replace("```","").strip()
                                                 s = cln.find('['); e = cln.rfind(']')+1
@@ -749,7 +776,6 @@ elif menu == "📂 智能拆书 & 资料":
                                                 db_data = []
                                                 for q in qs:
                                                     q_type = q.get('type', 'single')
-                                                    # 自动纠正逻辑
                                                     if 'subjective' in q_type or not q.get('options') or len(str(q.get('answer'))) > 10:
                                                         q_type = 'subjective'
                                                     else:
@@ -768,6 +794,8 @@ elif menu == "📂 智能拆书 & 资料":
                                                 if db_data:
                                                     supabase.table("question_bank").insert(db_data).execute()
                                             except: pass
+                                        elif "QuotaFailure" in str(r):
+                                            st.warning(f"章节 {row['title']} 处理时遇到 API 限流，跳过。")
                                         
                                         progress_bar.progress((i+1)/len(edited_df))
                                     
@@ -801,6 +829,8 @@ elif menu == "📂 智能拆书 & 资料":
                         supabase.table("materials").delete().eq("chapter_id", chap['id']).execute()
                         supabase.table("question_bank").delete().eq("chapter_id", chap['id']).execute()
                         st.rerun()
+
+
 # =========================================================
 # 📝 章节特训 (V6.0: 包含主观题 AI 评分)
 # =========================================================
@@ -1266,4 +1296,5 @@ elif menu == "⚙️ 设置中心":
                 supabase.table("books").delete().eq("user_id", user_id).execute()
                 # 因为设置了级联删除(Cascade)，章节、题目、内容会自动删除
                 st.success("资料库已格式化")
+
 
