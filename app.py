@@ -494,7 +494,7 @@ if menu == "🏠 仪表盘":
         """, unsafe_allow_html=True)
 
 # =========================================================
-# 📂 智能拆书 & 资料 (V6.2: 修复 API 超限报错导致的解析异常)
+# 📂 智能拆书 & 资料 (V6.4: 自动跨页修复版)
 # =========================================================
 elif menu == "📂 智能拆书 & 资料":
     st.title("📂 资料库管理 (Pro)")
@@ -592,28 +592,21 @@ elif menu == "📂 智能拆书 & 资料":
                                 toc_txt = extract_pdf(up_file, ts, te)
                                 full_p = f"{user_toc_prompt}\n\n目录文本：\n{toc_txt[:10000]}"
                                 
-                                # 调用 AI
                                 res = call_ai_universal(full_p)
                                 
-                                # === 🛡️ 新增：错误检测与数据校验 ===
+                                # 错误校验
                                 if not res:
-                                    st.error("AI 未返回任何内容，请检查网络。")
-                                elif "QuotaFailure" in res or "429" in res:
-                                    st.error("⚠️ Google API 调用过于频繁 (Quota Exceeded)。\n请休息 1 分钟后再试，或在左侧切换至 DeepSeek / OpenRouter。")
+                                    st.error("AI 未返回任何内容。")
+                                elif "QuotaFailure" in res:
+                                    st.error("⚠️ Google API 调用频繁，请稍候再试。")
                                 else:
                                     try:
                                         clean = res.replace("```json","").replace("```","").strip()
                                         s = clean.find('['); e = clean.rfind(']')+1
-                                        if s == -1 or e == -1: raise ValueError("未找到有效 JSON 列表")
-                                        
                                         data = json.loads(clean[s:e])
                                         
-                                        # 核心校验：如果列表里的对象没有 'title'，说明解析到了错误信息
                                         if not isinstance(data, list) or len(data) == 0 or 'title' not in data[0]:
-                                            st.error("❌ AI 返回的数据格式异常 (可能是 API 报错信息被误读)。")
-                                            with st.expander("查看 AI 原始返回 (用于调试)"):
-                                                st.text(res)
-                                            # 终止后续流程，防止脏数据进入 Step 2
+                                            st.error("❌ AI 返回格式异常。")
                                         else:
                                             # 预填答案页
                                             for row in data:
@@ -625,8 +618,6 @@ elif menu == "📂 智能拆书 & 资料":
                                             st.rerun()
                                     except Exception as e: 
                                         st.error(f"AI 解析失败: {e}")
-                                        with st.expander("查看 AI 原始返回"):
-                                            st.text(res)
 
                 # --- Step 2: 确认结构 ---
                 if 'toc_result' in st.session_state:
@@ -649,45 +640,41 @@ elif menu == "📂 智能拆书 & 资料":
                         col_cfg["ans_start_page"] = st.column_config.NumberColumn("答案起始", format="%d")
                         col_cfg["ans_end_page"] = st.column_config.NumberColumn("答案结束", format="%d")
 
-                    # 这里如果数据还是有问题，data_editor 可能会报错，但上面的校验已经拦截了大部分情况
                     try:
                         edited_df = st.data_editor(st.session_state.toc_result, column_config=col_cfg, num_rows="dynamic", use_container_width=True)
                     except:
-                        st.error("数据状态异常，请点击“重做第一步”刷新。")
-                        del st.session_state.toc_result
-                        st.stop()
+                        del st.session_state.toc_result; st.rerun()
                     
-                    # --- Step 3: 提取与入库 (含主观题提示词控制) ---
+                    # --- Step 3: 提取与入库 ---
                     if "习题库" in doc_type:
                         st.divider()
                         st.markdown("#### 🧪 第三步：入库配置与测试")
                         
-                        # --- Prompt 控制区 (题目提取) ---
                         st.markdown("🛠️ **AI 指令微调 (题目提取)**")
-                        st.caption("在此处指定如何识别主观题、计算题。")
                         
+                        # 默认使用【不拆分大题】的提示词，确保背景资料完整
                         default_extract_prompt = """
 任务：提取文本中的题目和答案。
-重点：**必须区分客观题（单/多/判）和主观题（计算/综合/简答）。**
+重点：**识别计算分析题和综合题，不要拆分小问！**
 
-返回 JSON 列表格式：
+处理规则：
+1. 对于【单选题/多选题/判断题】：正常提取，type 为 single/multi。
+2. 对于【计算分析题/综合题/主观题】：
+   - **务必将“题干背景资料”与“所有小问的要求”合并**，存入 content 字段。
+   - 不要把 (1)、(2)、(3) 拆成多条数据，请把它们整合成一道大题。
+   - 答案字段也请包含所有小问的解答过程。
+   - type 设为 subjective。
+
+返回 JSON 列表示例（主观题）：
 [
   {
-    "question": "1. 下列各项中...",
-    "type": "single",  // 选项: single, multi, subjective
-    "options": ["A. xxx", "B. xxx"], // 主观题此项为空数组 []
-    "answer": "A",     // 主观题此处填完整的文字答案/分录
-    "explanation": "解析..."
-  },
-  {
-    "question": "2. 甲公司发生如下交易...",
+    "question": "【计算分析题】甲公司2023年发生如下业务：(此处为大段背景资料)...... 要求：(1) 计算... (2) 编制会计分录...",
     "type": "subjective",
     "options": [],
-    "answer": "借：银行存款 100\n贷：主营业务收入 100",
-    "explanation": "解析..."
+    "answer": "(1) 计算过程：... \n(2) 借：... 贷：...", 
+    "explanation": "..."
   }
 ]
-注意：如果答案是长文本或包含分录，务必标记 type 为 subjective。
                         """
                         user_extract_prompt = st.text_area("提取提示词", value=default_extract_prompt.strip(), height=250)
 
@@ -697,26 +684,28 @@ elif menu == "📂 智能拆书 & 资料":
                         if st.button("🔍 抽取 5 题测试"):
                             row = edited_df[preview_idx]
                             try:
+                                # 题目文本提取
                                 p_s = int(float(row['start_page']))
                                 p_e = min(p_s + 3, int(float(row['end_page'])))
                                 up_file.seek(0)
                                 q_text = extract_pdf(up_file, p_s, p_e)
                                 
-                                # 答案拼接逻辑
+                                # 答案拼接逻辑 (这里进行了关键修改)
                                 if "文件末尾" in cached_ans_mode:
                                     a_s = int(float(row['ans_start_page']))
-                                    a_e = min(a_s + 2, int(float(row['ans_end_page'])))
+                                    # 🔥 修复1: 预览时多读几页答案，防止跨页截断 (从+2 改为 +5)
+                                    a_e = min(a_s + 5, int(float(row['ans_end_page']))) 
+                                    
                                     up_file.seek(0)
                                     a_text = extract_pdf(up_file, a_s, a_e)
                                     q_text += f"\n\n====== 答案区域 ======\n{a_text}"
                                 
-                                full_p = f"{user_extract_prompt}\n\n待提取文本：\n{q_text[:15000]}"
+                                full_p = f"{user_extract_prompt}\n\n待提取文本：\n{q_text[:20000]}" # 增加Token
                                 
-                                with st.spinner("AI 正在根据您的指令提取..."):
+                                with st.spinner("AI 正在提取 (已自动扩展阅读范围)..."):
                                     res = call_ai_universal(full_p)
-                                    # 预览时同样的错误校验
                                     if "QuotaFailure" in str(res):
-                                        st.error("⚠️ Google API 额度超限，请稍候再试。")
+                                        st.error("⚠️ API 配额超限。")
                                     elif res:
                                         cln = res.replace("```json","").replace("```","").strip()
                                         s = cln.find('['); e = cln.rfind(']')+1
@@ -750,20 +739,25 @@ elif menu == "📂 智能拆书 & 资料":
                                         }).execute()
                                         cid = c_res.data[0]['id']
                                         
-                                        # 提取全文
+                                        # 提取题目文本
                                         up_file.seek(0)
                                         txt = extract_pdf(up_file, c_s, c_e)
                                         
+                                        # 提取答案文本
                                         if "文件末尾" in cached_ans_mode:
                                             a_s = int(float(row['ans_start_page']))
-                                            a_e = int(float(row['ans_end_page']))
+                                            
+                                            # 🔥 修复2: 全量入库时，自动往后多读 1 页，做缓冲区
+                                            a_e_original = int(float(row['ans_end_page']))
+                                            a_e_safe = min(a_e_original + 1, total_pages)
+                                            
                                             if a_s > 0:
                                                 up_file.seek(0)
-                                                a_text = extract_pdf(up_file, a_s, a_e)
+                                                a_text = extract_pdf(up_file, a_s, a_e_safe)
                                                 txt += f"\n\n====== 答案区域 ======\n{a_text}"
                                         
                                         # 调用 AI
-                                        final_p = f"{user_extract_prompt}\n\n文本：\n{txt[:40000]}"
+                                        final_p = f"{user_extract_prompt}\n\n文本：\n{txt[:50000]}"
                                         r = call_ai_universal(final_p, timeout_override=300)
                                         
                                         if r and "QuotaFailure" not in str(r):
@@ -789,7 +783,7 @@ elif menu == "📂 智能拆书 & 资料":
                                                         "explanation": q.get('explanation', ''),
                                                         "type": q_type,
                                                         "origin": "extract",
-                                                        "batch_source": "PDF-V6"
+                                                        "batch_source": "PDF-V6.4"
                                                     })
                                                 if db_data:
                                                     supabase.table("question_bank").insert(db_data).execute()
@@ -805,7 +799,7 @@ elif menu == "📂 智能拆书 & 资料":
 
             except Exception as e: st.error(f"文件处理错误: {e}")
             
-    # 已有书籍管理
+    # 已有书籍管理 (保持不变)
     elif books:
         bid = book_map[sel_book_label]
         c_tit, c_act = st.columns([5, 1])
@@ -829,7 +823,6 @@ elif menu == "📂 智能拆书 & 资料":
                         supabase.table("materials").delete().eq("chapter_id", chap['id']).execute()
                         supabase.table("question_bank").delete().eq("chapter_id", chap['id']).execute()
                         st.rerun()
-
 
 # =========================================================
 # 📝 章节特训 (V6.3: 完整逻辑修复版 - 含数据库查询与主观题支持)
@@ -1474,6 +1467,7 @@ elif menu == "⚙️ 设置中心":
                 supabase.table("books").delete().eq("user_id", user_id).execute()
                 # 因为设置了级联删除(Cascade)，章节、题目、内容会自动删除
                 st.success("资料库已格式化")
+
 
 
 
