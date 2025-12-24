@@ -161,10 +161,10 @@ def save_ai_pref():
 
 # --- AI 调用 (通用版 + 动态超时) ---
 # --- AI 调用 (通用版：支持模型覆盖 + 超时豁免) ---
+# --- AI 调用 (通用版：修复模型混淆 Bug + 动态超时) ---
 def call_ai_universal(prompt, history=[], model_override=None, timeout_override=None):
     """
     timeout_override: 如果传入整数(秒)，将无视用户的全局设置，强制使用该时间。
-    传入 1200 (20分钟) 几乎等同于不限制，只依赖 API 服务端超时。
     """
     # 1. 确定超时时间
     if timeout_override is not None:
@@ -175,14 +175,24 @@ def call_ai_universal(prompt, history=[], model_override=None, timeout_override=
         settings = profile.get('settings') or {}
         current_timeout = settings.get('ai_timeout', 60)
 
-    # 2. 确定模型
+    # 2. 确定当前通道与模型 (🔥 核心修复：逻辑隔离)
     provider = st.session_state.get('selected_provider', 'Gemini')
-    target_model = model_override or st.session_state.get('openrouter_model_id') or st.session_state.get('google_model_id') or st.session_state.get('deepseek_model_id')
     
+    target_model = None
+    if model_override:
+        target_model = model_override
+    elif "Gemini" in provider:
+        target_model = st.session_state.get('google_model_id', 'gemini-1.5-flash')
+    elif "DeepSeek" in provider:
+        target_model = st.session_state.get('deepseek_model_id', 'deepseek-chat')
+    elif "OpenRouter" in provider:
+        target_model = st.session_state.get('openrouter_model_id', 'google/gemini-2.0-flash-exp:free')
+    
+    # 兜底防止 None
     if not target_model: target_model = "gemini-1.5-flash"
     
     try:
-        # A. Google Gemini
+        # A. Google Gemini 官方协议
         if "Gemini" in provider and not model_override:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent?key={API_KEY}"
             headers = {'Content-Type': 'application/json'}
@@ -192,28 +202,32 @@ def call_ai_universal(prompt, history=[], model_override=None, timeout_override=
                 contents.append({"role": role, "parts": [{"text": h['content']}]})
             contents.append({"role": "user", "parts": [{"text": prompt}]})
             
-            # 使用计算出的超时时间
             resp = requests.post(url, headers=headers, json={"contents": contents}, timeout=current_timeout)
             if resp.status_code == 200:
                 return resp.json()['candidates'][0]['content']['parts'][0]['text']
             return f"Gemini Error {resp.status_code}: {resp.text}"
 
-        # B. OpenAI 兼容 (DeepSeek / OpenRouter / 或 Override 的 Gemini)
+        # B. OpenAI 兼容协议 (DeepSeek / OpenRouter)
         else:
             client = None
-            # 特殊逻辑：如果是 Override 的 Gemini (用于拆书)，尝试走 OpenRouter 协议或 Gemini 协议
-            # 这里为了简化，假设拆书时 override 走的是 OpenRouter 的 Gemini，或者我们需要在这里特判
-            # 为了保证拆书稳定，建议拆书时如果 override="google/gemini-..."，我们还是走 OpenRouter 通道比较稳
+            # 根据 Provider 初始化对应的 Client
+            if model_override and "gemini" in model_override and "openrouter" in st.secrets:
+                 # 特殊情况：拆书时指定了 OpenRouter 的 Gemini
+                 client = OpenAI(api_key=st.secrets["openrouter"]["api_key"], base_url=st.secrets["openrouter"]["base_url"])
             
-            if model_override and "gemini" in model_override:
-                 if "openrouter" in st.secrets:
-                     client = OpenAI(api_key=st.secrets["openrouter"]["api_key"], base_url=st.secrets["openrouter"]["base_url"])
             elif "DeepSeek" in provider:
-                client = OpenAI(api_key=st.secrets["deepseek"]["api_key"], base_url=st.secrets["deepseek"]["base_url"])
-            elif "OpenRouter" in provider:
-                client = OpenAI(api_key=st.secrets["openrouter"]["api_key"], base_url=st.secrets["openrouter"]["base_url"])
+                if "deepseek" in st.secrets:
+                    client = OpenAI(api_key=st.secrets["deepseek"]["api_key"], base_url=st.secrets["deepseek"]["base_url"])
+                else:
+                    return "❌ DeepSeek Secrets 未配置"
             
-            if not client: return "AI Client 初始化失败"
+            elif "OpenRouter" in provider:
+                if "openrouter" in st.secrets:
+                    client = OpenAI(api_key=st.secrets["openrouter"]["api_key"], base_url=st.secrets["openrouter"]["base_url"])
+                else:
+                    return "❌ OpenRouter Secrets 未配置"
+            
+            if not client: return "AI Client 初始化失败 (请检查侧边栏选择)"
 
             messages = [{"role": "system", "content": "你是一位资深会计讲师。回答请使用 Markdown 格式。"}]
             for h in history:
@@ -221,17 +235,16 @@ def call_ai_universal(prompt, history=[], model_override=None, timeout_override=
                 messages.append({"role": role, "content": h['content']})
             messages.append({"role": "user", "content": prompt})
 
-            # 使用计算出的超时时间
             resp = client.chat.completions.create(
                 model=target_model, 
                 messages=messages, 
                 temperature=0.7,
-                timeout=current_timeout # 🔥 关键应用
+                timeout=current_timeout
             )
             return resp.choices[0].message.content
 
     except Exception as e:
-        return f"AI 处理超时或中断 (当前限制 {current_timeout}s): {e}"
+        return f"❌ 失败: AI 处理超时或中断 (当前限制 {current_timeout}s): {e}"
 
 
 
@@ -1471,6 +1484,7 @@ elif menu == "⚙️ 设置中心":
                 supabase.table("books").delete().eq("user_id", user_id).execute()
                 # 因为设置了级联删除(Cascade)，章节、题目、内容会自动删除
                 st.success("资料库已格式化")
+
 
 
 
