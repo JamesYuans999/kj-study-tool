@@ -448,47 +448,28 @@ if menu == "🏠 仪表盘":
         """, unsafe_allow_html=True)
 
 # =========================================================
-# 📂 智能拆书 & 资料 (V5.0: 全文扫描 + 目录定位 + Word支持)
+# 📂 智能拆书 & 资料 (V5.1: 定向扫描 + 抽样对齐 + 闭环验证)
 # =========================================================
 elif menu == "📂 智能拆书 & 资料":
     st.title("📂 资料库管理")
     
     # --- 辅助函数 ---
     def clean_textbook_content(text):
-        """清洗：去除页眉页脚标记（简单版）"""
+        """清洗教材：去页眉页脚"""
         lines = text.split('\n')
         cleaned = []
         for line in lines:
-            # 过滤掉 [[第x页]] 这种我们在全文扫描时插入的标记
-            if "[[第" in line and "页]]" in line: continue 
             if len(line.strip()) < 3 or line.strip().isdigit(): continue
             cleaned.append(line)
         return "\n".join(cleaned)
 
     def sanitize_answer(raw_ans):
+        """清洗答案：只保留 A-H"""
         if not raw_ans: return ""
         s = str(raw_ans).upper()
         import re
         clean_s = re.sub(r'[^A-H]', '', s)
         return "".join(sorted(list(set(clean_s))))
-
-    # 带页码标记的提取函数 (核心)
-    def extract_pdf_with_markers(file, start, end):
-        text = ""
-        try:
-            with pdfplumber.open(file) as pdf:
-                total = len(pdf.pages)
-                start = max(1, start)
-                end = min(total, end)
-                
-                for i in range(start-1, end):
-                    page_text = pdf.pages[i].extract_text()
-                    if page_text:
-                        # 插入页码锚点，帮助 AI 定位
-                        text += f"\n\n--- [[第 {i+1} 页]] ---\n\n"
-                        text += page_text
-            return text
-        except: return ""
 
     subjects = get_subjects()
     if not subjects: st.error("请先初始化科目数据"); st.stop()
@@ -501,304 +482,290 @@ elif menu == "📂 智能拆书 & 资料":
     with c2:
         books = get_books(sid)
         book_map = {f"{b['title']} (ID:{b['id']})": b['id'] for b in books}
-        b_opts = ["➕ 上传新资料..."] + list(book_map.keys())
+        b_opts = ["➕ 上传新资料 (智能拆分)..."] + list(book_map.keys())
         sel_book_label = st.selectbox("2. 选择书籍/文件", b_opts)
     
     st.divider()
 
     # =====================================================
-    # 场景 A: 上传新资料 (V5.0 全新流程)
+    # 场景 A: 上传新资料 (V5.1 优化流程)
     # =====================================================
     if "上传新" in sel_book_label:
-        st.markdown("#### 📤 资料入库向导")
+        st.markdown("#### 📤 第一步：文件定性与定位")
         
         # 1. 定性
-        c_type, c_format = st.columns([2, 1])
-        with c_type:
-            doc_type = st.radio("资料类型", ["📑 习题库 (用于录入题目)", "📖 纯教材 (用于AI导学)"], horizontal=True)
-        with c_format:
-            file_format = st.radio("文件格式", ["PDF (推荐)", "Word (.docx)"], horizontal=True)
-
+        doc_type = st.radio("这份文件是？", ["📑 习题库 (录入题目)", "📖 纯教材 (AI导学)"], horizontal=True)
+        
         # 2. 上传
-        if "PDF" in file_format:
-            up_file = st.file_uploader("上传 PDF", type="pdf")
-            is_pdf = True
-        else:
-            up_file = st.file_uploader("上传 Word", type="docx")
-            is_pdf = False
+        up_file = st.file_uploader("拖入 PDF 文件", type="pdf")
         
         if up_file:
-            # 获取基本信息
-            total_pages = 0
-            if is_pdf:
-                try:
-                    with pdfplumber.open(up_file) as pdf: total_pages = len(pdf.pages)
-                    st.success(f"文件已加载：共 {total_pages} 页")
-                except: st.error("PDF 读取失败")
-            else:
-                st.success("Word 文档已加载 (无页码概念，将进行全文处理)")
-
-            if 'toc_step' not in st.session_state: st.session_state.toc_step = 1
-            
-            # --- Step 1: 目录结构分析策略 ---
-            if st.session_state.toc_step == 1:
-                st.markdown("##### 🕵️‍♂️ 选择结构分析策略")
+            try:
+                with pdfplumber.open(up_file) as pdf: 
+                    total_pages = len(pdf.pages)
                 
-                scan_text = ""
+                # 初始化配置状态
+                if 'toc_config' not in st.session_state:
+                    st.session_state.toc_config = {
+                        "toc_s": 1, "toc_e": min(10, total_pages),
+                        "content_s": 1, "ans_s": total_pages
+                    }
                 
-                if is_pdf:
-                    strategy = st.radio("AI 扫描策略", [
-                        "A. 扫描书本自带目录 (精准/省流)", 
-                        "B. 全文扫描识别章节 (适合无目录文件)",
-                        "C. 手动指定范围 (分批录入)"
-                    ])
-                    
-                    # 策略 A: 自带目录
-                    if "自带目录" in strategy:
-                        c_toc1, c_toc2 = st.columns(2)
-                        with c_toc1: toc_s = st.number_input("目录开始页", 1, value=1)
-                        with c_toc2: toc_e = st.number_input("目录结束页", 1, value=min(10, total_pages) if total_pages else 5)
-                        st.caption(f"AI 将只阅读 P{toc_s}-P{toc_e}，并根据正文逻辑推算。")
+                # --- Step 1: 告诉 AI 书的结构 ---
+                if 'toc_result' not in st.session_state:
+                    c_info = st.container()
+                    with c_info:
+                        st.info(f"✅ 文件已加载，共 {total_pages} 页。请告诉 AI 关键页码位置，帮助它精准切分。")
                         
-                        if st.button("🚀 分析目录页"):
-                            with st.spinner("读取目录..."):
-                                scan_text = extract_pdf_with_markers(up_file, toc_s, toc_e)
-                                # 提示 AI 这是目录
-                                prompt_context = f"这是书本的目录页。请提取其中的章节名称和对应的起始页码。"
-
-                    # 策略 B: 全文扫描 (你的需求核心)
-                    elif "全文扫描" in strategy:
-                        st.info(f"💡 提示：当前文件共 {total_pages} 页。Gemini 1.5 Flash 支持超长上下文，可以一次性读完。")
-                        st.caption("AI 将通过读取文本中的 `[[第x页]]` 标记来自动定位章节位置。")
+                        col_toc, col_body = st.columns(2)
+                        with col_toc:
+                            st.markdown("**1. 目录在哪？** (AI 读这里分析章节)")
+                            ts = st.number_input("目录开始页", 1, total_pages, st.session_state.toc_config['toc_s'])
+                            te = st.number_input("目录结束页", 1, total_pages, st.session_state.toc_config['toc_e'])
                         
-                        if st.button("🚀 全文读取并分析 (耗时稍长)"):
-                            with st.spinner(f"正在读取全书 {total_pages} 页内容..."):
-                                # 读取全文并插入页码锚点
+                        with col_body:
+                            st.markdown("**2. 正文在哪？** (AI 用此推算物理页码)")
+                            cs = st.number_input("正文(第一章)开始页", 1, total_pages, st.session_state.toc_config['content_s'], help="目录里的'第1页'通常对应PDF的第几页？")
+                        
+                        # 习题库特有配置
+                        if "习题库" in doc_type:
+                            st.markdown("**3. 答案在哪？**")
+                            ans_mode = st.radio("答案位置模式", ["🅰️ 紧跟在题目后面", "🅱️ 集中在文件末尾", "🇨 集中在每一章末尾"])
+                            as_page = 0
+                            if ans_mode == "🅱️ 集中在文件末尾":
+                                as_page = st.number_input("答案区域开始页", 1, total_pages, value=total_pages-5)
+                        
+                        # 执行分析按钮
+                        if st.button("🚀 第二步：分析目录结构"):
+                            with st.spinner("AI 正在阅读目录并计算页码..."):
+                                # 读取目录文本
                                 up_file.seek(0)
-                                scan_text = extract_pdf_with_markers(up_file, 1, total_pages)
+                                toc_txt = extract_pdf(up_file, ts, te)
                                 
-                                char_count = len(scan_text)
-                                st.write(f"📖 全文读取完毕，共 {char_count} 字。正在发送给 AI...")
+                                # 构建 Prompt
+                                p = f"""
+                                任务：分析教材/习题集目录。
+                                文件总页数：{total_pages}。
+                                用户设定的【正文起始页】是 PDF 第 {cs} 页。
                                 
-                                prompt_context = f"""
-                                这是全书的内容。文中包含 `[[第 x 页]]` 的标记。
-                                请根据内容变化，分析出主要章节（或试卷名称）的起始位置。
-                                重点关注：大标题、"第一章"、"Part 1" 等特征。
+                                请根据目录文本，提取章节名称，并结合正文起始偏移量，推算每一章在 PDF 中的【物理起始页码】。
+                                
+                                要求：
+                                1. 返回纯 JSON 列表。
+                                2. 格式：[{{ "title": "第一章 存货", "start_page": 5, "end_page": 10 }}]
+                                3. end_page 推测为下一章开始前一页。最后一章结束页设为 {total_pages}。
+                                
+                                目录文本：
+                                {toc_txt[:10000]}
                                 """
-
-                    # 策略 C: 手动
-                    else:
-                        st.info("不进行 AI 分析，直接进入下一步手动填写页码。")
-                        if st.button("➡️ 直接进入手动配置"):
-                            st.session_state.toc_result = [{"title": "第一章 示例", "start_page": 1, "end_page": total_pages}]
-                            st.session_state.toc_step = 2
-                            st.rerun()
-
-                else: # Word 模式
-                    st.info("Word 文档暂不支持按页拆分，将作为单章节处理，或者由 AI 识别大标题。")
-                    if st.button("🚀 分析 Word 结构"):
-                        scan_text = extract_docx(up_file)
-                        prompt_context = "分析以下 Word 文档内容，根据大标题提取章节结构（由于 Word 无页码，请只返回章节名，页码填1）。"
-
-                # 执行 AI 分析 (针对 PDF 策略 A/B 和 Word)
-                if scan_text:
-                    p = f"""
-                    任务：{prompt_context}
-                    
-                    【必须】返回纯 JSON 列表，格式如下：
-                    [
-                        {{"title": "第一章 存货", "start_page": 5, "end_page": 20}},
-                        {{"title": "第二章 固定资产", "start_page": 21, "end_page": 40}}
-                    ]
-                    
-                    注意：
-                    1. 如果是全文扫描，请根据 `[[第 x 页]]` 标记推断 `start_page`。
-                    2. `end_page` 推测为下一章开始前一页。
-                    3. Word 文档页码统一填 0 或 1。
-                    
-                    文本内容摘要（或全文）：
-                    {scan_text[:100000]} 
-                    """
-                    # 限制 10万字符，防止过大，通常够用了。Gemini 支持更多，但这里做个安全限制。
-                    
-                    res = call_ai_universal(p, timeout_override=120) # 稍长超时
-                    if res:
-                        try:
-                            clean = res.replace("```json","").replace("```","").strip()
-                            s = clean.find('['); e = clean.rfind(']')+1
-                            st.session_state.toc_result = json.loads(clean[s:e])
-                            st.session_state.toc_step = 2
-                            st.rerun()
-                        except: st.error("AI 解析失败，请重试或选择手动模式")
-
-            # --- Step 2: 确认与执行 ---
-            if st.session_state.get('toc_step') == 2 and 'toc_result' in st.session_state:
-                st.divider()
-                st.markdown("#### 📝 第二步：确认分类结构")
-                
-                # 配置习题集的答案模式
-                if "习题库" in doc_type:
-                    st.markdown("##### ⚙️ 习题提取配置")
-                    c_mode, c_hint = st.columns([2, 2])
-                    with c_mode:
-                        # 新增选项 C
-                        ans_mode = st.selectbox("答案在哪里？", [
-                            "🅰️ 紧跟在题目后面 (每题有解析)", 
-                            "🅱️ 集中在文件末尾 (需拼接)",
-                            "🇨 集中在每一章的末尾 (需拼接)",
-                            "❌ 无答案 (仅录入题目)"
-                        ])
-                    with c_hint:
-                        user_hint = st.text_input("给 AI 的特殊叮嘱", placeholder="例：忽略页眉水印...")
-                    
-                    st.session_state.ans_mode_cache = ans_mode
-                    st.session_state.user_hint_cache = user_hint
-
-                # 表格配置
-                col_cfg = {
-                    "title": "章节名称",
-                    "start_page": st.column_config.NumberColumn("起始页", min_value=1, format="%d"),
-                    "end_page": st.column_config.NumberColumn("结束页", min_value=1, format="%d")
-                }
-                
-                # 如果是答案后置 (文件末尾)，需要填答案页
-                is_file_end = "文件末尾" in st.session_state.get('ans_mode_cache', '')
-                if is_file_end:
-                    st.warning("⚠️ 答案在【文件末尾】：请填写每一章对应的【答案页码】！")
-                    col_cfg["ans_start_page"] = st.column_config.NumberColumn("答案起始", min_value=1, format="%d")
-                    col_cfg["ans_end_page"] = st.column_config.NumberColumn("答案结束", min_value=1, format="%d")
-
-                edited_df = st.data_editor(st.session_state.toc_result, column_config=col_cfg, num_rows="dynamic", use_container_width=True)
-                
-                # --- 👁️ 拼接预览 (针对 PDF) ---
-                if is_pdf and "习题库" in doc_type:
-                    st.markdown("##### 👁️ 抽查与试读")
-                    preview_idx = st.selectbox("选择章节预览：", range(len(edited_df)), format_func=lambda i: edited_df[i]['title'])
-                    
-                    if st.button("生成文本预览"):
-                        row = edited_df[preview_idx]
-                        p_s, p_e = int(float(row['start_page'])), int(float(row['end_page']))
-                        up_file.seek(0)
-                        
-                        # 1. 提取题目
-                        final_text = extract_pdf(up_file, p_s, p_e)
-                        
-                        # 2. 处理答案拼接
-                        mode = st.session_state.get('ans_mode_cache', '')
-                        
-                        if "文件末尾" in mode:
-                            # 从表格读取答案页码
-                            a_s = int(float(row.get('ans_start_page', 0)))
-                            a_e = int(float(row.get('ans_end_page', 0)))
-                            if a_s > 0:
-                                up_file.seek(0)
-                                a_text = extract_pdf(up_file, a_s, a_e)
-                                final_text += f"\n\n====== [拼接] 答案区域 P{a_s}-{a_e} ======\n{a_text}"
-                            else: final_text += "\n\n(未设置答案页码)"
-                        
-                        elif "每一章的末尾" in mode:
-                            # 逻辑：假设本章最后 1-2 页是答案，或者是紧跟在题目后面的文本
-                            # 这里只需把整章文本发给 AI，提示它“答案在本段文本的末尾”即可
-                            final_text += "\n\n(提示：用户指出本章答案位于本段文本的末尾部分)"
-                            
-                        st.text_area("AI 将看到的文本：", value=final_text[:2000] + "\n...(略)...", height=200)
-
-                st.divider()
-
-                # --- 执行入库 ---
-                if st.button("💾 执行全量入库", type="primary"):
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    
-                    try:
-                        # 1. 建书
-                        b_res = supabase.table("books").insert({
-                            "user_id": user_id, "subject_id": sid, "title": up_file.name.replace(".pdf",""), "total_pages": total_pages if is_pdf else 0
-                        }).execute()
-                        bid = b_res.data[0]['id']
-                        
-                        total_tasks = len(edited_df)
-                        for i, row in enumerate(edited_df):
-                            status_text.text(f"处理中: {row['title']}...")
-                            
-                            # 获取页码 (PDF)
-                            if is_pdf:
-                                c_start = int(float(row['start_page']))
-                                c_end = int(float(row['end_page']))
-                                up_file.seek(0)
-                                q_text = extract_pdf(up_file, c_start, c_end)
-                            else: # Word
-                                c_start, c_end = 0, 0
-                                q_text = extract_docx(up_file) # Word 暂不支持分章，全文存入
-                            
-                            # A. 建章
-                            c_res = supabase.table("chapters").insert({
-                                "book_id": bid, "title": row['title'], "start_page": c_start, "end_page": c_end, "user_id": user_id
-                            }).execute()
-                            cid = c_res.data[0]['id']
-                            
-                            # B. 分流处理
-                            if "纯教材" in doc_type:
-                                clean_txt = clean_textbook_content(q_text)
-                                if len(clean_txt) > 10:
-                                    save_material_v3(cid, clean_txt, user_id)
-                            else:
-                                # 习题处理
-                                final_text = q_text
-                                mode = st.session_state.get('ans_mode_cache', '')
                                 
-                                # 答案拼接逻辑
-                                if is_pdf and "文件末尾" in mode:
-                                    a_s = int(float(row.get('ans_start_page', 0)))
-                                    a_e = int(float(row.get('ans_end_page', 0)))
-                                    if a_s > 0:
-                                        up_file.seek(0)
-                                        a_text = extract_pdf(up_file, a_s, a_e)
-                                        final_text += f"\n\n====== 答案参考区域 ======\n{a_text}"
-                                
-                                # AI 提取 (超时豁免)
-                                if len(final_text) > 50:
-                                    hint = st.session_state.get('user_hint_cache', '')
-                                    p_ex = f"""
-                                    任务：提取题目和答案。
-                                    模式：{mode}。
-                                    用户提示：{hint}。
-                                    返回JSON: [{{ "question": "...", "options": ["A.","B."], "answer": "A", "explanation": "..." }}]
-                                    文本：{final_text[:30000]}
-                                    """
+                                res = call_ai_universal(p)
+                                if res:
                                     try:
-                                        r = call_ai_universal(p_ex, timeout_override=900)
-                                        if r:
-                                            cln = r.replace("```json","").replace("```","").strip()
-                                            s = cln.find('['); e = cln.rfind(']')+1
-                                            qs = json.loads(cln[s:e])
-                                            
-                                            fmt = []
-                                            for q in qs:
-                                                ans = sanitize_answer(q.get('answer',''))
-                                                fmt.append({
-                                                    "question": q['question'], "options": q['options'], "answer": ans,
-                                                    "explanation": q.get('explanation',''), "type": "multi" if len(ans)>1 else "single"
-                                                })
-                                            save_questions_v3(fmt, cid, user_id, origin="extract")
-                                    except: pass
-                            
-                            progress_bar.progress((i+1)/total_tasks)
-                        
-                        st.success("全部完成！")
-                        del st.session_state.toc_step
-                        del st.session_state.toc_result
-                        time.sleep(2)
-                        st.rerun()
+                                        clean = res.replace("```json","").replace("```","").strip()
+                                        s = clean.find('['); e = clean.rfind(']')+1
+                                        data = json.loads(clean[s:e])
+                                        
+                                        # 如果是答案后置模式，预填答案页
+                                        for row in data:
+                                            row['ans_start_page'] = as_page if "文件末尾" in ans_mode else 0
+                                            row['ans_end_page'] = total_pages if "文件末尾" in ans_mode else 0
 
-                    except Exception as e: st.error(f"失败: {e}")
+                                        st.session_state.toc_result = data
+                                        st.session_state.ans_mode_cache = ans_mode if "习题库" in doc_type else "无"
+                                        st.rerun()
+                                    except: st.error("AI 解析失败，请调整目录页码范围重试。")
+
+                # --- Step 2: 确认结构 (含重做按钮) ---
+                if 'toc_result' in st.session_state:
+                    st.divider()
+                    c_head, c_re = st.columns([4, 1])
+                    with c_head: st.markdown("#### 📝 第三步：确认章节与页码")
+                    with c_re: 
+                        if st.button("🔄 不满意？重新生成"):
+                            del st.session_state.toc_result
+                            st.rerun()
+
+                    # 表格配置
+                    col_cfg = {
+                        "title": "章节名称",
+                        "start_page": st.column_config.NumberColumn("题目起始", min_value=1, format="%d"),
+                        "end_page": st.column_config.NumberColumn("题目结束", min_value=1, format="%d")
+                    }
+                    
+                    is_ans_split = "文件末尾" in st.session_state.get('ans_mode_cache', '')
+                    if is_ans_split:
+                        st.info("检测到答案后置：AI 已根据你提供的‘答案开始页’预填了数据，请检查每一章对应的答案页码是否正确。")
+                        col_cfg["ans_start_page"] = st.column_config.NumberColumn("答案起始", min_value=1, format="%d")
+                        col_cfg["ans_end_page"] = st.column_config.NumberColumn("答案结束", min_value=1, format="%d")
+
+                    edited_df = st.data_editor(st.session_state.toc_result, column_config=col_cfg, num_rows="dynamic", use_container_width=True)
+                    
+                    # --- Step 3: 抽样验证 (习题库专属) ---
+                    if "习题库" in doc_type:
+                        st.divider()
+                        st.markdown("#### 🧪 第四步：抽题拼合预览 (必做)")
+                        st.caption("AI 将抽取该章节的前 5 道题，尝试与答案拼合。请确认【题目】和【答案】是否一一对应。")
+                        
+                        # 选章节
+                        preview_options = [f"{i}. {row['title']}" for i, row in enumerate(edited_df)]
+                        sel_preview = st.selectbox("选择章节进行测试：", preview_options)
+                        preview_idx = int(sel_preview.split(".")[0])
+                        
+                        # 按钮：生成预览表格
+                        if st.button("🔍 抽取 5 题进行匹配测试", type="secondary"):
+                            row = edited_df[preview_idx]
+                            try:
+                                # 读取题目 (前2-3页)
+                                p_s = int(float(row['start_page']))
+                                p_e = min(p_s + 3, int(float(row['end_page'])))
+                                up_file.seek(0)
+                                q_text = extract_pdf(up_file, p_s, p_e)
+                                
+                                # 读取答案 (前1-2页)
+                                ans_mode = st.session_state.get('ans_mode_cache')
+                                if is_ans_split:
+                                    a_s = int(float(row['ans_start_page']))
+                                    a_e = min(a_s + 2, int(float(row['ans_end_page'])))
+                                    up_file.seek(0)
+                                    a_text = extract_pdf(up_file, a_s, a_e)
+                                    q_text += f"\n\n====== 答案区域 P{a_s} ======\n{a_text}"
+                                elif "章末尾" in ans_mode:
+                                    q_text += "\n\n(用户提示：答案在本章末尾，请查找)"
+
+                                with st.spinner("AI 正在提取并配对..."):
+                                    p_test = f"""
+                                    任务：试读文本，提取前 5 道单选题，并匹配答案。
+                                    模式：{ans_mode}。
+                                    
+                                    要求：
+                                    1. 仅返回前 5 题。
+                                    2. 答案清洗为大写字母 A-H。
+                                    3. 返回JSON: [{{ "question": "...", "answer": "A" }}]
+                                    
+                                    文本：
+                                    {q_text[:15000]}
+                                    """
+                                    res = call_ai_universal(p_test)
+                                    if res:
+                                        cln = res.replace("```json","").replace("```","").strip()
+                                        s = cln.find('['); e = cln.rfind(']')+1
+                                        st.session_state.preview_data = json.loads(cln[s:e])
+                            
+                            except Exception as e: st.error(f"测试失败: {e}")
+
+                        # 展示结果表格
+                        if st.session_state.get('preview_data'):
+                            st.write("##### 👀 匹配结果")
+                            
+                            # 构造展示数据
+                            preview_df = pd.DataFrame(st.session_state.preview_data)
+                            st.table(preview_df[['question', 'answer']])
+                            
+                            st.success("👆 请检查：题目完整吗？答案对吗？")
+                            
+                            # --- 最终执行 ---
+                            st.markdown("---")
+                            if st.button("💾 确认无误，执行全量入库", type="primary"):
+                                # (这里复用之前的全量入库逻辑)
+                                progress_bar = st.progress(0)
+                                status_text = st.empty()
+                                try:
+                                    # 1. 建书
+                                    book_res = supabase.table("books").insert({
+                                        "user_id": user_id, "subject_id": sid, "title": up_file.name.replace(".pdf",""), "total_pages": total_pages
+                                    }).execute()
+                                    bid = book_res.data[0]['id']
+                                    
+                                    total_tasks = len(edited_df)
+                                    for i, row in enumerate(edited_df):
+                                        status_text.text(f"正在全量处理：{row['title']}...")
+                                        
+                                        # 获取页码
+                                        c_s = int(float(row['start_page']))
+                                        c_e = int(float(row['end_page']))
+                                        
+                                        # 建章
+                                        c_res = supabase.table("chapters").insert({
+                                            "book_id": bid, "title": row['title'], "start_page": c_s, "end_page": c_e, "user_id": user_id
+                                        }).execute()
+                                        cid = c_res.data[0]['id']
+                                        
+                                        # 提取全文
+                                        up_file.seek(0)
+                                        q_text = extract_pdf(up_file, c_s, c_e)
+                                        
+                                        # 拼接答案
+                                        final_text = q_text
+                                        if is_ans_split:
+                                            a_s = int(float(row['ans_start_page']))
+                                            a_e = int(float(row['ans_end_page']))
+                                            if a_s > 0:
+                                                up_file.seek(0)
+                                                a_text = extract_pdf(up_file, a_s, a_e)
+                                                final_text += f"\n\n====== 答案区域 ======\n{a_text}"
+                                        
+                                        # 全量提取
+                                        if len(final_text) > 50:
+                                            p_full = f"""
+                                            任务：全量提取题目和答案。
+                                            模式：{ans_mode}
+                                            返回JSON: [{{ "question": "...", "options": ["A.","B."], "answer": "A", "explanation": "..." }}]
+                                            文本：{final_text[:30000]}
+                                            """
+                                            try:
+                                                r = call_ai_universal(p_full, timeout_override=900)
+                                                if r:
+                                                    cln = r.replace("```json","").replace("```","").strip()
+                                                    s = cln.find('['); e = cln.rfind(']')+1
+                                                    qs = json.loads(cln[s:e])
+                                                    fmt = [{"question":q['question'], "options":q['options'], "answer":sanitize_answer(q.get('answer','')), "explanation":q.get('explanation',''), "type":"multi" if len(q.get('answer',''))>1 else "single"} for q in qs]
+                                                    save_questions_v3(fmt, cid, user_id, origin="extract")
+                                            except: pass
+                                        
+                                        progress_bar.progress((i+1)/total_tasks)
+                                    
+                                    st.balloons()
+                                    st.success("🎉 全部入库完成！")
+                                    del st.session_state.toc_step
+                                    del st.session_state.toc_result
+                                    del st.session_state.preview_data
+                                    time.sleep(2)
+                                    st.rerun()
+                                except Exception as e: st.error(f"入库失败: {e}")
+
+                    # --- 纯教材模式的简单保存 ---
+                    elif "纯教材" in doc_type:
+                        if st.button("💾 确认拆分并保存教材"):
+                            # ... (教材保存逻辑同前，创建书->循环章节->存materials) ...
+                            # 简写：
+                            try:
+                                b_res = supabase.table("books").insert({"user_id": user_id, "subject_id": sid, "title": up_file.name.replace(".pdf",""), "total_pages": total_pages}).execute()
+                                bid = b_res.data[0]['id']
+                                bar = st.progress(0)
+                                for i, row in enumerate(edited_df):
+                                    c_s = int(float(row['start_page']))
+                                    c_e = int(float(row['end_page']))
+                                    c_res = supabase.table("chapters").insert({"book_id": bid, "title": row['title'], "start_page": c_s, "end_page": c_e, "user_id": user_id}).execute()
+                                    up_file.seek(0)
+                                    txt = extract_pdf(up_file, c_s, c_e)
+                                    save_material_v3(c_res.data[0]['id'], clean_textbook_content(txt), user_id)
+                                    bar.progress((i+1)/len(edited_df))
+                                st.success("教材入库成功！")
+                                del st.session_state.toc_step
+                                del st.session_state.toc_result
+                                time.sleep(1)
+                                st.rerun()
+                            except Exception as e: st.error(f"失败: {e}")
+
+            except Exception as e: st.error(f"文件处理错误: {e}")
 
     # =====================================================
     # 场景 B: 已有书籍管理 (保持不变)
     # =====================================================
     elif books:
-        # ... (请保留之前的书籍管理代码) ...
-        # 复用之前提供的代码块: bid = book_map[sel_book_label] ...
+        # ... (保持之前的书籍管理代码，如删除书籍、清空章节等) ...
+        # 请直接保留之前的代码块，不需要改动
         bid = book_map[sel_book_label]
         c_tit, c_act = st.columns([5, 1])
         with c_tit: st.markdown(f"### 📘 {sel_book_label.split(' (ID')[0]}")
@@ -809,8 +776,8 @@ elif menu == "📂 智能拆书 & 资料":
                     st.toast("书籍已删除")
                     time.sleep(1)
                     st.rerun()
-                except Exception as e: st.error(f"删除失败: {e}")
-
+                except: st.error("删除失败")
+        
         chapters = get_chapters(bid)
         if not chapters: st.info("本书暂无章节")
         else:
@@ -818,12 +785,10 @@ elif menu == "📂 智能拆书 & 资料":
                 q_cnt = supabase.table("question_bank").select("id", count="exact").eq("chapter_id", chap['id']).execute().count
                 m_cnt = supabase.table("materials").select("id", count="exact").eq("chapter_id", chap['id']).execute().count
                 with st.expander(f"📑 {chap['title']} (题:{q_cnt} | 教材:{'有' if m_cnt else '无'})"):
-                    if st.button("🗑️ 清空本章数据", key=f"c_{chap['id']}"):
-                         supabase.table("materials").delete().eq("chapter_id", chap['id']).execute()
-                         supabase.table("question_bank").delete().eq("chapter_id", chap['id']).execute()
-                         st.toast("已清空")
-                         time.sleep(1)
-                         st.rerun()
+                    if st.button("🗑️ 清空", key=f"del_c_{chap['id']}"):
+                        supabase.table("materials").delete().eq("chapter_id", chap['id']).execute()
+                        supabase.table("question_bank").delete().eq("chapter_id", chap['id']).execute()
+                        st.rerun()
 # =========================================================
 # 📝 章节特训 (V3.8 终极版：进度管理 + 智能题型 + AI闭环)
 # =========================================================
@@ -1624,6 +1589,7 @@ elif menu == "⚙️ 设置中心":
                 supabase.table("books").delete().eq("user_id", user_id).execute()
                 # 因为设置了级联删除(Cascade)，章节、题目、内容会自动删除
                 st.success("资料库已格式化")
+
 
 
 
