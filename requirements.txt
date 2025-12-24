@@ -6,3 +6,4 @@ plotly
 pandas
 python-docx
 openai
+openpyxl
