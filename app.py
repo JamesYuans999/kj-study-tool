@@ -494,7 +494,7 @@ if menu == "🏠 仪表盘":
         """, unsafe_allow_html=True)
 
 # =========================================================
-# 📂 智能拆书 & 资料 (V6.0: 提示词可控 + 主观题支持)
+# 📂 智能拆书 & 资料 (V6.1: 修复变量作用域 + 提示词控制)
 # =========================================================
 elif menu == "📂 智能拆书 & 资料":
     st.title("📂 资料库管理 (Pro)")
@@ -507,16 +507,6 @@ elif menu == "📂 智能拆书 & 资料":
             if len(line.strip()) < 3 or line.strip().isdigit(): continue
             cleaned.append(line)
         return "\n".join(cleaned)
-
-    def sanitize_answer(raw_ans):
-        """清洗答案：保留字母用于选择题，保留长文本用于主观题"""
-        s = str(raw_ans).strip()
-        # 简单判断：如果只有ABCDE且长度短，清洗为字母；否则保留原样
-        import re
-        if len(s) < 10 and re.match(r'^[A-Ha-h\s,，]+$', s):
-            clean_s = re.sub(r'[^A-H]', '', s.upper())
-            return "".join(sorted(list(set(clean_s))))
-        return s # 主观题直接返回原样
 
     subjects = get_subjects()
     if not subjects: st.error("请先初始化科目数据"); st.stop()
@@ -535,7 +525,7 @@ elif menu == "📂 智能拆书 & 资料":
     st.divider()
 
     # =====================================================
-    # 场景 A: 上传新资料 (包含 Prompt 控制)
+    # 场景 A: 上传新资料
     # =====================================================
     if "上传新" in sel_book_label:
         st.markdown("#### 📤 第一步：文件定性与定位")
@@ -628,12 +618,15 @@ elif menu == "📂 智能拆书 & 资料":
                             del st.session_state.toc_result
                             st.rerun()
 
+                    # 从缓存获取 ans_mode
+                    cached_ans_mode = st.session_state.get('ans_mode_cache', '无')
+
                     col_cfg = {
                         "title": "章节名称",
                         "start_page": st.column_config.NumberColumn("题目起始", format="%d"),
                         "end_page": st.column_config.NumberColumn("题目结束", format="%d")
                     }
-                    if "文件末尾" in st.session_state.get('ans_mode_cache', ''):
+                    if "文件末尾" in cached_ans_mode:
                         col_cfg["ans_start_page"] = st.column_config.NumberColumn("答案起始", format="%d")
                         col_cfg["ans_end_page"] = st.column_config.NumberColumn("答案结束", format="%d")
 
@@ -678,7 +671,6 @@ elif menu == "📂 智能拆书 & 资料":
                         
                         if st.button("🔍 抽取 5 题测试"):
                             row = edited_df[preview_idx]
-                            # ... (读取文本逻辑同前，略微简化以聚焦核心) ...
                             try:
                                 p_s = int(float(row['start_page']))
                                 p_e = min(p_s + 3, int(float(row['end_page'])))
@@ -686,8 +678,7 @@ elif menu == "📂 智能拆书 & 资料":
                                 q_text = extract_pdf(up_file, p_s, p_e)
                                 
                                 # 答案拼接逻辑
-                                ans_mode = st.session_state.get('ans_mode_cache')
-                                if "文件末尾" in ans_mode:
+                                if "文件末尾" in cached_ans_mode:
                                     a_s = int(float(row['ans_start_page']))
                                     a_e = min(a_s + 2, int(float(row['ans_end_page'])))
                                     up_file.seek(0)
@@ -704,7 +695,7 @@ elif menu == "📂 智能拆书 & 资料":
                                         st.session_state.preview_data = json.loads(cln[s:e])
                             except Exception as e: st.error(f"测试失败: {e}")
 
-                        # 展示结果 (增加类型显示)
+                        # 展示结果
                         if st.session_state.get('preview_data'):
                             st.write("##### 👀 识别结果预览")
                             p_df = pd.DataFrame(st.session_state.preview_data)
@@ -724,8 +715,8 @@ elif menu == "📂 智能拆书 & 资料":
                                 try:
                                     for i, row in enumerate(edited_df):
                                         st_text.text(f"正在处理：{row['title']}...")
-                                        # ... (建章逻辑同前) ...
                                         c_s = int(float(row['start_page'])); c_e = int(float(row['end_page']))
+                                        
                                         c_res = supabase.table("chapters").insert({
                                             "book_id": bid, "title": row['title'], "start_page": c_s, "end_page": c_e, "user_id": user_id
                                         }).execute()
@@ -734,13 +725,19 @@ elif menu == "📂 智能拆书 & 资料":
                                         # 提取全文
                                         up_file.seek(0)
                                         txt = extract_pdf(up_file, c_s, c_e)
-                                        if "文件末尾" in ans_mode:
-                                            # ... (答案拼接) ...
-                                            pass 
+                                        
+                                        # 修复：使用 cached_ans_mode
+                                        if "文件末尾" in cached_ans_mode:
+                                            a_s = int(float(row['ans_start_page']))
+                                            a_e = int(float(row['ans_end_page']))
+                                            if a_s > 0:
+                                                up_file.seek(0)
+                                                a_text = extract_pdf(up_file, a_s, a_e)
+                                                txt += f"\n\n====== 答案区域 ======\n{a_text}"
                                         
                                         # 调用 AI
-                                        final_p = f"{user_extract_prompt}\n\n文本：\n{txt[:40000]}" # 加大Token
-                                        r = call_ai_universal(final_p, timeout_override=300) # 5分钟超时
+                                        final_p = f"{user_extract_prompt}\n\n文本：\n{txt[:40000]}"
+                                        r = call_ai_universal(final_p, timeout_override=300)
                                         
                                         if r:
                                             try:
@@ -751,8 +748,8 @@ elif menu == "📂 智能拆书 & 资料":
                                                 # 数据清洗与存库
                                                 db_data = []
                                                 for q in qs:
-                                                    # 自动纠正 type
                                                     q_type = q.get('type', 'single')
+                                                    # 自动纠正逻辑
                                                     if 'subjective' in q_type or not q.get('options') or len(str(q.get('answer'))) > 10:
                                                         q_type = 'subjective'
                                                     else:
@@ -762,7 +759,7 @@ elif menu == "📂 智能拆书 & 资料":
                                                         "chapter_id": cid, "user_id": user_id,
                                                         "content": q['question'],
                                                         "options": q.get('options', []),
-                                                        "correct_answer": q.get('answer', ''), # 主观题直接存
+                                                        "correct_answer": q.get('answer', ''),
                                                         "explanation": q.get('explanation', ''),
                                                         "type": q_type,
                                                         "origin": "extract",
@@ -780,10 +777,30 @@ elif menu == "📂 智能拆书 & 资料":
 
             except Exception as e: st.error(f"文件处理错误: {e}")
             
-    # 已有书籍管理 (保持原样，省略以节省篇幅)
+    # 已有书籍管理
     elif books:
-         # ... (此处保留原有书籍删除/管理逻辑) ...
-         st.info("👈 请在左侧选择具体功能进行操作")
+        bid = book_map[sel_book_label]
+        c_tit, c_act = st.columns([5, 1])
+        with c_tit: st.markdown(f"### 📘 {sel_book_label.split(' (ID')[0]}")
+        with c_act:
+            if st.button("🗑️ 删除本书"):
+                try:
+                    supabase.table("books").delete().eq("id", bid).execute()
+                    st.toast("书籍已删除")
+                    time.sleep(1); st.rerun()
+                except: st.error("删除失败")
+        
+        chapters = get_chapters(bid)
+        if not chapters: st.info("本书暂无章节")
+        else:
+            for chap in chapters:
+                q_cnt = supabase.table("question_bank").select("id", count="exact").eq("chapter_id", chap['id']).execute().count
+                m_cnt = supabase.table("materials").select("id", count="exact").eq("chapter_id", chap['id']).execute().count
+                with st.expander(f"📑 {chap['title']} (题:{q_cnt} | 教材:{'有' if m_cnt else '无'})"):
+                    if st.button("🗑️ 清空", key=f"del_c_{chap['id']}"):
+                        supabase.table("materials").delete().eq("chapter_id", chap['id']).execute()
+                        supabase.table("question_bank").delete().eq("chapter_id", chap['id']).execute()
+                        st.rerun()
 # =========================================================
 # 📝 章节特训 (V6.0: 包含主观题 AI 评分)
 # =========================================================
@@ -1249,3 +1266,4 @@ elif menu == "⚙️ 设置中心":
                 supabase.table("books").delete().eq("user_id", user_id).execute()
                 # 因为设置了级联删除(Cascade)，章节、题目、内容会自动删除
                 st.success("资料库已格式化")
+
