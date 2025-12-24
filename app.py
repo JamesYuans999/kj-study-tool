@@ -12,6 +12,7 @@ import plotly.express as px
 from openai import OpenAI
 import streamlit.components.v1 as components
 import os
+import openpyxl
 
 # ==============================================================================
 # 1. 全局配置与“奶油绿便当盒”风格还原 (CSS)
@@ -431,6 +432,7 @@ with st.sidebar:
         "⚔️ 全真模考",
         "📊 弱项分析",
         "❌ 错题本",
+        "🛠️ 数据管理 & 补录"
         "⚙️ 设置中心"
     ]
     
@@ -1383,6 +1385,252 @@ elif menu == "❌ 错题本":
                 for m in h:
                     st.markdown(f"<div class='chat-{'ai' if m['role']=='model' else 'user'}'>{m['content']}</div>", unsafe_allow_html=True)
 
+
+
+# =========================================================
+# 🛠️ 数据管理 & 补录 (V7.0: 人工兜底与 Excel 导入)
+# =========================================================
+elif menu == "🛠️ 数据管理 & 补录":
+    st.title("🛠️ 数据管理中心")
+    st.caption("在此处手动修正 AI 的错误，或通过 Excel 批量导入自有题库。")
+
+    tab_edit, tab_upload = st.tabs(["✏️ 题库可视编辑", "📥 Excel 批量导入"])
+
+    # --- 辅助工具：选项格式转换 ---
+    def list_to_str(lst):
+        """将 ['A.xx', 'B.xx'] 转为 'A.xx | B.xx' 方便编辑"""
+        if isinstance(lst, list): return " | ".join(lst)
+        return str(lst) if lst else ""
+
+    def str_to_list(s):
+        """将 'A.xx | B.xx' 转回 JSON 数组"""
+        if not s: return []
+        return [x.strip() for x in s.split("|") if x.strip()]
+
+    # ---------------------------------------------------------
+    # Tab 1: 数据库直接编辑 (CRUD)
+    # ---------------------------------------------------------
+    with tab_edit:
+        st.info("💡 提示：双击单元格修改，修改后点击下方“💾 保存修改”生效。勾选行首可删除。")
+        
+        # 1. 筛选数据
+        subjects = get_subjects()
+        if not subjects: st.warning("请先初始化科目"); st.stop()
+        
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            s_name = st.selectbox("科目", [s['name'] for s in subjects], key="man_sub")
+            sid = next(s['id'] for s in subjects if s['name'] == s_name)
+        with c2:
+            books = get_books(sid)
+            bid = None
+            if books:
+                b_map = {b['title']: b['id'] for b in books}
+                b_name = st.selectbox("书籍", list(b_map.keys()), key="man_book")
+                bid = b_map[b_name]
+        with c3:
+            cid = None
+            if bid:
+                chaps = get_chapters(bid)
+                if chaps:
+                    c_map = {c['title']: c['id'] for c in chaps}
+                    c_name = st.selectbox("章节", list(c_map.keys()), key="man_chap")
+                    cid = c_map[c_name]
+
+        # 2. 加载数据
+        if cid:
+            # 拉取该章节所有题目
+            qs = supabase.table("question_bank").select("*").eq("chapter_id", cid).order("id").execute().data
+            
+            if not qs:
+                st.warning("该章节暂无题目，请去【Excel 批量导入】或【智能拆书】添加。")
+            else:
+                # 转换数据格式以适应 DataEditor (主要是 options 数组转字符串)
+                edit_data = []
+                for q in qs:
+                    edit_data.append({
+                        "id": q['id'],
+                        "type": q['type'],
+                        "content": q['content'],
+                        "options_str": list_to_str(q['options']), # 拍扁数组
+                        "correct_answer": q['correct_answer'],
+                        "explanation": q.get('explanation', ''),
+                        "del": False # 删除标记
+                    })
+                
+                df = pd.DataFrame(edit_data)
+                
+                # 3. 显示编辑器
+                edited_df = st.data_editor(
+                    df,
+                    column_config={
+                        "id": st.column_config.NumberColumn("ID", disabled=True, width="small"),
+                        "del": st.column_config.CheckboxColumn("删除?", width="small"),
+                        "type": st.column_config.SelectboxColumn("题型", options=["single","multi","subjective"], width="medium"),
+                        "content": st.column_config.TextColumn("题目内容 (支持换行)", width="large"),
+                        "options_str": st.column_config.TextColumn("选项 (用 | 分隔)", help="例如: A.对 | B.错", width="medium"),
+                        "correct_answer": st.column_config.TextColumn("答案", width="small"),
+                        "explanation": st.column_config.TextColumn("解析", width="medium"),
+                    },
+                    use_container_width=True,
+                    num_rows="dynamic", # 允许添加新行
+                    key=f"editor_{cid}"
+                )
+
+                # 4. 保存逻辑
+                if st.button("💾 保存修改 (Save Changes)", type="primary"):
+                    try:
+                        changes_count = 0
+                        # 转换 dataframe 为 list of dicts
+                        rows = edited_df.to_dict('records')
+                        
+                        for row in rows:
+                            # A. 删除逻辑
+                            if row.get('del') == True:
+                                if row.get('id'): # 只有已存在的才能删
+                                    supabase.table("question_bank").delete().eq("id", row['id']).execute()
+                                    changes_count += 1
+                                continue
+                            
+                            # B. 数据清洗
+                            clean_opts = str_to_list(row['options_str'])
+                            
+                            # 构造 Payload
+                            payload = {
+                                "chapter_id": cid,
+                                "user_id": user_id,
+                                "type": row['type'],
+                                "content": row['content'],
+                                "options": clean_opts,
+                                "correct_answer": row['correct_answer'],
+                                "explanation": row['explanation'],
+                                "origin": "manual_edit"
+                            }
+                            
+                            # C. 更新或新增
+                            if row.get('id'):
+                                # 更新
+                                supabase.table("question_bank").update(payload).eq("id", row['id']).execute()
+                            else:
+                                # 新增 (ID为空)
+                                if row['content']: # 防止空行
+                                    supabase.table("question_bank").insert(payload).execute()
+                            
+                            changes_count += 1
+                        
+                        st.success(f"成功处理 {changes_count} 条变更！")
+                        time.sleep(1)
+                        st.rerun()
+                        
+                    except Exception as e:
+                        st.error(f"保存失败: {e}")
+
+    # ---------------------------------------------------------
+    # Tab 2: Excel 批量导入 (Token Saver)
+    # ---------------------------------------------------------
+    with tab_upload:
+        st.markdown("#### 📥 零消耗导入")
+        st.markdown("如果你的资料已经是整理好的（如机构给的题库Excel），直接在这里上传，**无需消耗 AI Token**，且准确率 100%。")
+        
+        # 1. 下载模板
+        template_data = [
+            {
+                "题型(必填)": "single", 
+                "题目内容(必填)": "下列属于资产的是？", 
+                "选项(用|分隔)": "A.存货 | B.员工 | C.计划", 
+                "正确答案(必填)": "A", 
+                "解析": "资产定义..."
+            },
+            {
+                "题型(必填)": "subjective", 
+                "题目内容(必填)": "计算甲公司2024净利润...", 
+                "选项(用|分隔)": "", 
+                "正确答案(必填)": "净利润=100-20=80万", 
+                "解析": ""
+            }
+        ]
+        df_temp = pd.DataFrame(template_data)
+        
+        # 转换 CSV 用于下载
+        csv = df_temp.to_csv(index=False).encode('utf-8-sig')
+        st.download_button("⬇️ 下载 Excel/CSV 模板", data=csv, file_name="题库导入模板.csv", mime="text/csv")
+        
+        st.divider()
+        
+        # 2. 上传与解析
+        c_up1, c_up2 = st.columns(2)
+        with c_up1:
+            # 必须先选章节
+            st.info("请先在上方【题库可视编辑】标签页中选中**目标章节**，数据将导入该章节。")
+            target_cid = cid # 复用上面的变量
+            if not target_cid:
+                st.error("未选择目标章节，无法导入！")
+            
+        with c_up2:
+            up_excel = st.file_uploader("上传填好的 CSV/Excel", type=["csv", "xlsx"])
+        
+        if up_excel and target_cid:
+            if st.button("🚀 开始导入", type="primary"):
+                try:
+                    # 读取文件
+                    if up_excel.name.endswith('.csv'):
+                        df_new = pd.read_csv(up_excel)
+                    else:
+                        df_new = pd.read_excel(up_excel)
+                    
+                    # 进度条
+                    bar = st.progress(0)
+                    total = len(df_new)
+                    success_cnt = 0
+                    
+                    batch_data = []
+                    
+                    for i, row in df_new.iterrows():
+                        # 容错处理列名
+                        content = row.get('题目内容(必填)') or row.get('题目内容') or row.get('content')
+                        ans = row.get('正确答案(必填)') or row.get('正确答案') or row.get('correct_answer')
+                        typ = row.get('题型(必填)') or row.get('题型') or row.get('type') or 'single'
+                        exp = row.get('解析') or row.get('explanation') or ''
+                        opts_raw = row.get('选项(用|分隔)') or row.get('选项') or row.get('options')
+                        
+                        if pd.isna(content) or pd.isna(ans): continue # 跳过无效行
+                        
+                        # 选项清洗
+                        opts_list = []
+                        if opts_raw and not pd.isna(opts_raw):
+                            opts_list = [str(x).strip() for x in str(opts_raw).split("|") if str(x).strip()]
+                        
+                        batch_data.append({
+                            "chapter_id": target_cid,
+                            "user_id": user_id,
+                            "type": str(typ).strip(),
+                            "content": str(content),
+                            "correct_answer": str(ans),
+                            "explanation": str(exp),
+                            "options": opts_list,
+                            "origin": "excel_import",
+                            "batch_source": f"Upload-{datetime.date.today()}"
+                        })
+                        
+                        if len(batch_data) >= 10: # 10条一批插入
+                            supabase.table("question_bank").insert(batch_data).execute()
+                            batch_data = []
+                            
+                        bar.progress((i+1)/total)
+                        success_cnt += 1
+                        
+                    # 插入剩余的
+                    if batch_data:
+                        supabase.table("question_bank").insert(batch_data).execute()
+                        
+                    st.success(f"🎉 导入成功！共加入 {success_cnt} 道题。")
+                    time.sleep(2)
+                    st.rerun()
+                    
+                except Exception as e:
+                    st.error(f"导入失败: {e}\n请确保使用了正确的模板格式。")
+
+
 # =========================================================
 # ⚙️ 设置中心 (V3.1 修复版：配置回显 + 连通测试 + 考期同步)
 # =========================================================
@@ -1484,6 +1732,7 @@ elif menu == "⚙️ 设置中心":
                 supabase.table("books").delete().eq("user_id", user_id).execute()
                 # 因为设置了级联删除(Cascade)，章节、题目、内容会自动删除
                 st.success("资料库已格式化")
+
 
 
 
