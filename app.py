@@ -465,19 +465,24 @@ with st.sidebar:
             st.session_state.openrouter_model_id = st.selectbox("🔌 模型", final_ids, index=idx_m, key="or_model_select", on_change=save_ai_pref)
         except: st.error("OpenRouter 连接失败")
 
-# 4. Glama (自动获取模型版)
+    # 4. Glama (自动获取模型版)
+    # -------------------------------------------------------
+    # 找到 elif "Glama" in prov:  <-- 确保只保留这一个 Glama 分支
+    # -------------------------------------------------------
     elif "Glama" in prov:
-        # 检查配置是否存在
+        # 1. 检查 secrets 是否配置
         if "glama" in st.secrets:
             glama_key = st.secrets["glama"]["api_key"]
             glama_url = st.secrets["glama"]["base_url"]
             
-            # 尝试自动获取
-            with st.spinner("正在从 Glama 获取模型..."):
-                glama_models = fetch_glama_models(glama_key, glama_url)
+            # 2. 尝试联网获取
+            # 注意：如果 url 配置错误，这里可能会转圈很久或失败
+            glama_models = fetch_glama_models(glama_key, glama_url)
             
+            # 3. 根据获取结果显示 UI
             if glama_models:
-                # 如果获取成功，显示下拉框
+                # 成功：显示“已联网获取”的下拉框
+                st.success(f"✅ 已连接 Glama，加载 {len(glama_models)} 个模型")
                 idx_m = glama_models.index(saved_m) if saved_m in glama_models else 0
                 st.session_state.glama_model_id = st.selectbox(
                     "🔌 模型 (已联网获取)", 
@@ -487,8 +492,8 @@ with st.sidebar:
                     on_change=save_ai_pref
                 )
             else:
-                # 获取失败时的兜底（回退到手动输入）
-                st.warning("无法自动获取模型列表，请手动输入")
+                # 失败：回退到纯文本输入框
+                st.warning("⚠️ 无法获取模型列表 (URL可能错误)，请手动输入")
                 st.session_state.glama_model_id = st.text_input(
                     "请输入 Glama 模型 ID", 
                     value=saved_m or "gpt-4o-mini", 
@@ -496,8 +501,8 @@ with st.sidebar:
                     on_change=save_ai_pref
                 )
         else:
-            st.error("❌ 未配置 Glama Secrets")
-            st.caption("请在 .streamlit/secrets.toml 添加 [glama] 配置")
+            st.error("❌ 未配置 .streamlit/secrets.toml 中的 [glama]")
+
     
     # --- 导航菜单 (关键修改点：名字与下方主逻辑严格一致) ---
     # 定义菜单列表
@@ -1964,6 +1969,7 @@ elif menu == "⚙️ 设置中心":
                 supabase.table("books").delete().eq("user_id", user_id).execute()
                 # 因为设置了级联删除(Cascade)，章节、题目、内容会自动删除
                 st.success("资料库已格式化")
+
 
 
 
