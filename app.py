@@ -328,6 +328,36 @@ def fetch_openrouter_models(api_key):
         return []
     except: return []
 
+# --- 新增：动态获取 Glama 模型列表 ---
+@st.cache_data(ttl=3600)
+def fetch_glama_models(api_key, base_url):
+    """
+    从 Glama 获取可用模型列表
+    """
+    try:
+        # 自动修正 Base URL (防止用户填错)
+        # Glama 的标准 Base URL 通常是 https://glama.ai/api/gateway/openai/v1
+        # 但获取 models 时只需 base_url + /models
+        target_url = base_url.rstrip("/") + "/models"
+        
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        resp = requests.get(target_url, headers=headers, timeout=10)
+        
+        if resp.status_code == 200:
+            data = resp.json().get('data', [])
+            # 提取模型 ID 并排序
+            return sorted([m['id'] for m in data], key=lambda x: x)
+        else:
+            print(f"Glama Fetch Error: {resp.status_code} - {resp.text}")
+            return []
+    except Exception as e:
+        print(f"Glama Fetch Exception: {e}")
+        return []
+
 # --- 数据库 CRUD Helper ---
 def get_subjects():
     return supabase.table("subjects").select("*").execute().data
@@ -435,26 +465,39 @@ with st.sidebar:
             st.session_state.openrouter_model_id = st.selectbox("🔌 模型", final_ids, index=idx_m, key="or_model_select", on_change=save_ai_pref)
         except: st.error("OpenRouter 连接失败")
 
-    # 4. Glama (新增配置区)
+# 4. Glama (自动获取模型版)
     elif "Glama" in prov:
-        st.caption("Glama 通常作为 API 网关使用")
-        # 由于 Glama 模型列表可能需要鉴权获取，这里暂时提供手动输入或预设常用模型
-        # 你可以根据 Glama 提供的模型列表修改这里的 options
-        glama_defaults = ["gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet", "gemini-1.5-pro"]
-        
-        # 允许用户手动输入，因为 Glama 可能支持很多代理模型
-        input_type = st.radio("模型选择方式", ["📝 常用列表", "⌨️ 手动输入"], horizontal=True)
-        
-        if "列表" in input_type:
-             idx_m = glama_defaults.index(saved_m) if saved_m in glama_defaults else 0
-             sel_m = st.selectbox("🔌 模型", glama_defaults, index=idx_m, key="glama_list_select")
+        # 检查配置是否存在
+        if "glama" in st.secrets:
+            glama_key = st.secrets["glama"]["api_key"]
+            glama_url = st.secrets["glama"]["base_url"]
+            
+            # 尝试自动获取
+            with st.spinner("正在从 Glama 获取模型..."):
+                glama_models = fetch_glama_models(glama_key, glama_url)
+            
+            if glama_models:
+                # 如果获取成功，显示下拉框
+                idx_m = glama_models.index(saved_m) if saved_m in glama_models else 0
+                st.session_state.glama_model_id = st.selectbox(
+                    "🔌 模型 (已联网获取)", 
+                    glama_models, 
+                    index=idx_m, 
+                    key="glama_model_select", 
+                    on_change=save_ai_pref
+                )
+            else:
+                # 获取失败时的兜底（回退到手动输入）
+                st.warning("无法自动获取模型列表，请手动输入")
+                st.session_state.glama_model_id = st.text_input(
+                    "请输入 Glama 模型 ID", 
+                    value=saved_m or "gpt-4o-mini", 
+                    key="glama_manual_input",
+                    on_change=save_ai_pref
+                )
         else:
-             sel_m = st.text_input("请输入 Glama 模型 ID", value=saved_m or "gpt-4o-mini", key="glama_manual_input")
-        
-        st.session_state.glama_model_id = sel_m
-        # 手动触发保存，因为 text_input 没有 on_change 自动绑定保存逻辑会比较复杂
-        if st.session_state.get('glama_model_id') != saved_m:
-            save_ai_pref() # 尝试保存
+            st.error("❌ 未配置 Glama Secrets")
+            st.caption("请在 .streamlit/secrets.toml 添加 [glama] 配置")
     
     # --- 导航菜单 (关键修改点：名字与下方主逻辑严格一致) ---
     # 定义菜单列表
@@ -1921,6 +1964,7 @@ elif menu == "⚙️ 设置中心":
                 supabase.table("books").delete().eq("user_id", user_id).execute()
                 # 因为设置了级联删除(Cascade)，章节、题目、内容会自动删除
                 st.success("资料库已格式化")
+
 
 
 
