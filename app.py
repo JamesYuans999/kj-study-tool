@@ -474,7 +474,7 @@ with st.sidebar:
         
         # 1. 定义 Glama 支持的常用模型 (根据官方文档整理)
         glama_presets = [
-            "gemini-2.0-flash-exp",          # 强力推荐
+            "google-vertex/gemini-2.0-flash-exp",  # 👈 加上 google-vertex/ 前缀
             "google-vertex/gemini-1.5-pro",
             "openai/gpt-4o",
             "openai/gpt-4o-mini",
@@ -1971,6 +1971,7 @@ elif menu == "⚙️ 设置中心":
                 supabase.table("books").delete().eq("user_id", user_id).execute()
                 # 因为设置了级联删除(Cascade)，章节、题目、内容会自动删除
                 st.success("资料库已格式化")
+
 
 
 
