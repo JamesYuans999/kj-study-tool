@@ -744,13 +744,20 @@ elif menu == "📂 智能拆书 & 资料":
                                 st.rerun()
 
                         cached_ans_mode = st.session_state.get('ans_mode_cache', '无')
+                        
+                        # 🔥 动态调整表头名称 (修复点)
+                        is_textbook = "纯教材" in doc_type
+                        lbl_start = "正文起始页" if is_textbook else "题目起始页"
+                        lbl_end = "正文结束页" if is_textbook else "题目结束页"
 
                         col_cfg = {
                             "title": "章节名称",
-                            "start_page": st.column_config.NumberColumn("题目起始", format="%d"),
-                            "end_page": st.column_config.NumberColumn("题目结束", format="%d")
+                            "start_page": st.column_config.NumberColumn(lbl_start, format="%d", min_value=1),
+                            "end_page": st.column_config.NumberColumn(lbl_end, format="%d", min_value=1)
                         }
-                        if "文件末尾" in cached_ans_mode:
+                        
+                        # 只有非教材(习题库)且答案后置时，才显示答案页配置
+                        if not is_textbook and "文件末尾" in cached_ans_mode:
                             col_cfg["ans_start_page"] = st.column_config.NumberColumn("答案起始", format="%d")
                             col_cfg["ans_end_page"] = st.column_config.NumberColumn("答案结束", format="%d")
 
@@ -1974,6 +1981,7 @@ elif menu == "⚙️ 设置中心":
                 supabase.table("books").delete().eq("user_id", user_id).execute()
                 # 因为设置了级联删除(Cascade)，章节、题目、内容会自动删除
                 st.success("资料库已格式化")
+
 
 
 
