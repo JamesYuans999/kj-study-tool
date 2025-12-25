@@ -466,42 +466,44 @@ with st.sidebar:
         except: st.error("OpenRouter 连接失败")
 
     # 4. Glama (自动获取模型版)
-    # -------------------------------------------------------
-    # 找到 elif "Glama" in prov:  <-- 确保只保留这一个 Glama 分支
+# -------------------------------------------------------
+    # Glama (稳定版：预设列表 + 手动输入)
     # -------------------------------------------------------
     elif "Glama" in prov:
-        # 1. 检查 secrets 是否配置
-        if "glama" in st.secrets:
-            glama_key = st.secrets["glama"]["api_key"]
-            glama_url = st.secrets["glama"]["base_url"]
-            
-            # 2. 尝试联网获取
-            # 注意：如果 url 配置错误，这里可能会转圈很久或失败
-            glama_models = fetch_glama_models(glama_key, glama_url)
-            
-            # 3. 根据获取结果显示 UI
-            if glama_models:
-                # 成功：显示“已联网获取”的下拉框
-                st.success(f"✅ 已连接 Glama，加载 {len(glama_models)} 个模型")
-                idx_m = glama_models.index(saved_m) if saved_m in glama_models else 0
-                st.session_state.glama_model_id = st.selectbox(
-                    "🔌 模型 (已联网获取)", 
-                    glama_models, 
-                    index=idx_m, 
-                    key="glama_model_select", 
-                    on_change=save_ai_pref
-                )
-            else:
-                # 失败：回退到纯文本输入框
-                st.warning("⚠️ 无法获取模型列表 (URL可能错误)，请手动输入")
-                st.session_state.glama_model_id = st.text_input(
-                    "请输入 Glama 模型 ID", 
-                    value=saved_m or "gpt-4o-mini", 
-                    key="glama_manual_input",
-                    on_change=save_ai_pref
-                )
+        st.caption("🚀 已启用 Glama 网关加速")
+        
+        # 1. 定义 Glama 支持的常用模型 (根据官方文档整理)
+        glama_presets = [
+            "gemini-2.0-flash-exp",          # 强力推荐
+            "google-vertex/gemini-1.5-pro",
+            "openai/gpt-4o",
+            "openai/gpt-4o-mini",
+            "anthropic/claude-3-5-sonnet",
+            "meta-llama/llama-3.1-405b-instruct"
+        ]
+        
+        # 2. 提供切换方式：选常用的 vs 手输冷门的
+        input_mode = st.radio("模型选择", ["⚡ 常用模型", "⌨️ 手动输入"], horizontal=True, label_visibility="collapsed")
+        
+        if "常用" in input_mode:
+            # 自动定位上次选的模型
+            idx_m = glama_presets.index(saved_m) if saved_m in glama_presets else 0
+            st.session_state.glama_model_id = st.selectbox(
+                "🔌 选择模型", 
+                glama_presets, 
+                index=idx_m, 
+                key="glama_list_select", 
+                on_change=save_ai_pref
+            )
         else:
-            st.error("❌ 未配置 .streamlit/secrets.toml 中的 [glama]")
+            st.session_state.glama_model_id = st.text_input(
+                "请输入模型 ID", 
+                value=saved_m or "gemini-2.0-flash-exp", 
+                placeholder="例如: google-vertex/gemini-1.5-flash",
+                key="glama_manual_input",
+                on_change=save_ai_pref
+            )
+            st.caption("提示：可在 Glama 后台查看完整的 Model ID")
 
     
     # --- 导航菜单 (关键修改点：名字与下方主逻辑严格一致) ---
@@ -1969,6 +1971,7 @@ elif menu == "⚙️ 设置中心":
                 supabase.table("books").delete().eq("user_id", user_id).execute()
                 # 因为设置了级联删除(Cascade)，章节、题目、内容会自动删除
                 st.success("资料库已格式化")
+
 
 
 
