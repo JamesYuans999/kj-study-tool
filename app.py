@@ -158,6 +158,7 @@ def save_ai_pref():
     if "OpenRouter" in str(p): m = st.session_state.get('or_model_select')
     elif "DeepSeek" in str(p): m = st.session_state.get('ds_model_select')
     elif "Gemini" in str(p): m = st.session_state.get('gl_model_select')
+    elif "Glama" in str(p): m = st.session_state.get('glama_model_id')
     if p: update_settings(user_id, {"last_provider": p, "last_used_model": m})
 
 # --- AI 调用 (通用版 + 动态超时) ---
@@ -395,7 +396,7 @@ with st.sidebar:
     st.markdown("### 会计私教 Pro")
     
     # --- AI 设置 (保持不变) ---
-    provs = ["Gemini (官方直连)", "DeepSeek (官方直连)", "OpenRouter (聚合平台)"]
+    provs = ["Gemini (官方直连)", "DeepSeek (官方直连)", "OpenRouter (聚合平台)", "Glama (聚合平台)"] # <--- 加在这里
     saved_p = settings.get('last_provider')
     idx_p = 0
     if saved_p:
@@ -407,31 +408,53 @@ with st.sidebar:
     
     saved_m = settings.get('last_used_model')
     
+    # 1. Gemini
     if "Gemini" in prov:
         opts = fetch_google_models(st.secrets["GOOGLE_API_KEY"]) or ["gemini-1.5-flash"]
         idx_m = opts.index(saved_m) if saved_m in opts else 0
         st.session_state.google_model_id = st.selectbox("🔌 模型", opts, index=idx_m, key="gl_model_select", on_change=save_ai_pref)
         
+    # 2. DeepSeek
     elif "DeepSeek" in prov:
         opts = ["deepseek-chat", "deepseek-reasoner"]
         idx_m = opts.index(saved_m) if saved_m in opts else 0
         st.session_state.deepseek_model_id = st.selectbox("🔌 模型", opts, index=idx_m, key="ds_model_select", on_change=save_ai_pref)
         
+    # 3. OpenRouter
     elif "OpenRouter" in prov:
-        all_ms = fetch_openrouter_models(st.secrets["openrouter"]["api_key"])
-        if not all_ms:
-            st.warning("OpenRouter 连接失败")
-            final_ids = ["google/gemini-2.0-flash-exp:free"]
-        else:
-            ft = st.radio("筛选", ["🤑 免费", "🌎 全部"], horizontal=True)
-            subset = [m for m in all_ms if m['is_free']] if "免费" in ft else all_ms
-            final_ids = [m['id'] for m in subset]
-            if not final_ids: final_ids = [m['id'] for m in all_ms]
-            
-        idx_m = final_ids.index(saved_m) if saved_m in final_ids else 0
-        st.session_state.openrouter_model_id = st.selectbox("🔌 模型", final_ids, index=idx_m, key="or_model_select", on_change=save_ai_pref)
+        # (保持原有的 OpenRouter 代码不变...)
+        try:
+            all_ms = fetch_openrouter_models(st.secrets["openrouter"]["api_key"])
+            if not all_ms: final_ids = ["google/gemini-2.0-flash-exp:free"]
+            else:
+                ft = st.radio("筛选", ["🤑 免费", "🌎 全部"], horizontal=True)
+                subset = [m for m in all_ms if m['is_free']] if "免费" in ft else all_ms
+                final_ids = [m['id'] for m in subset]
+                if not final_ids: final_ids = [m['id'] for m in all_ms]
+            idx_m = final_ids.index(saved_m) if saved_m in final_ids else 0
+            st.session_state.openrouter_model_id = st.selectbox("🔌 模型", final_ids, index=idx_m, key="or_model_select", on_change=save_ai_pref)
+        except: st.error("OpenRouter 连接失败")
 
-    st.divider()
+    # 4. Glama (新增配置区)
+    elif "Glama" in prov:
+        st.caption("Glama 通常作为 API 网关使用")
+        # 由于 Glama 模型列表可能需要鉴权获取，这里暂时提供手动输入或预设常用模型
+        # 你可以根据 Glama 提供的模型列表修改这里的 options
+        glama_defaults = ["gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet", "gemini-1.5-pro"]
+        
+        # 允许用户手动输入，因为 Glama 可能支持很多代理模型
+        input_type = st.radio("模型选择方式", ["📝 常用列表", "⌨️ 手动输入"], horizontal=True)
+        
+        if "列表" in input_type:
+             idx_m = glama_defaults.index(saved_m) if saved_m in glama_defaults else 0
+             sel_m = st.selectbox("🔌 模型", glama_defaults, index=idx_m, key="glama_list_select")
+        else:
+             sel_m = st.text_input("请输入 Glama 模型 ID", value=saved_m or "gpt-4o-mini", key="glama_manual_input")
+        
+        st.session_state.glama_model_id = sel_m
+        # 手动触发保存，因为 text_input 没有 on_change 自动绑定保存逻辑会比较复杂
+        if st.session_state.get('glama_model_id') != saved_m:
+            save_ai_pref() # 尝试保存
     
     # --- 导航菜单 (关键修改点：名字与下方主逻辑严格一致) ---
     # 定义菜单列表
@@ -1898,6 +1921,7 @@ elif menu == "⚙️ 设置中心":
                 supabase.table("books").delete().eq("user_id", user_id).execute()
                 # 因为设置了级联删除(Cascade)，章节、题目、内容会自动删除
                 st.success("资料库已格式化")
+
 
 
 
