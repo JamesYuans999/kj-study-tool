@@ -165,11 +165,9 @@ def save_ai_pref():
 # --- AI 调用 (通用版：支持模型覆盖 + 超时豁免) ---
 # --- AI 调用 (通用版：修复模型混淆 Bug + 动态超时) ---
 # --- AI 调用 (通用版：支持 Google / DeepSeek / OpenRouter / Glama) ---
+# --- AI 调用 (V8.0: 含 Glama 深度调试模式) ---
 def call_ai_universal(prompt, history=[], model_override=None, timeout_override=None):
-    """
-    timeout_override: 如果传入整数(秒)，将无视用户的全局设置，强制使用该时间。
-    """
-    # 1. 确定超时时间
+    # 1. 确定超时
     if timeout_override is not None:
         current_timeout = timeout_override
     else:
@@ -177,10 +175,11 @@ def call_ai_universal(prompt, history=[], model_override=None, timeout_override=
         settings = profile.get('settings') or {}
         current_timeout = settings.get('ai_timeout', 60)
 
-    # 2. 确定当前通道与模型
+    # 2. 确定通道与模型
     provider = st.session_state.get('selected_provider', 'Gemini')
-    
     target_model = None
+    
+    # 优先级：Override > Glama特定 > 通用Session
     if model_override:
         target_model = model_override
     elif "Gemini" in provider:
@@ -189,15 +188,15 @@ def call_ai_universal(prompt, history=[], model_override=None, timeout_override=
         target_model = st.session_state.get('deepseek_model_id', 'deepseek-chat')
     elif "OpenRouter" in provider:
         target_model = st.session_state.get('openrouter_model_id', 'google/gemini-2.0-flash-exp:free')
-    elif "Glama" in provider:  # <--- 新增 Glama
-        target_model = st.session_state.get('glama_model_id', 'glama-model') # 默认模型ID
-    
+    elif "Glama" in provider:
+        target_model = st.session_state.get('glama_model_id', 'openai/gpt-4o-mini')
+
     if not target_model: target_model = "gemini-1.5-flash"
     
     try:
         # A. Google Gemini 官方协议
         if "Gemini" in provider and not model_override:
-            # ... (保持原有的 Gemini 代码不变) ...
+            # ... (保持 Gemini 原有代码不变) ...
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent?key={API_KEY}"
             headers = {'Content-Type': 'application/json'}
             contents = []
@@ -214,40 +213,41 @@ def call_ai_universal(prompt, history=[], model_override=None, timeout_override=
         # B. OpenAI 兼容协议 (DeepSeek / OpenRouter / Glama)
         else:
             client = None
+            debug_info = "" # 用于报错时显示调试信息
             
-            # 1. OpenRouter (Gemini Override 拆书专用)
+            # --- 核心初始化逻辑 ---
             if model_override and "gemini" in model_override and "openrouter" in st.secrets:
                  client = OpenAI(api_key=st.secrets["openrouter"]["api_key"], base_url=st.secrets["openrouter"]["base_url"])
             
-            # 2. DeepSeek
             elif "DeepSeek" in provider:
-                if "deepseek" in st.secrets:
-                    client = OpenAI(api_key=st.secrets["deepseek"]["api_key"], base_url=st.secrets["deepseek"]["base_url"])
-                else: return "❌ DeepSeek Secrets 未配置"
+                client = OpenAI(api_key=st.secrets["deepseek"]["api_key"], base_url=st.secrets["deepseek"]["base_url"])
             
-            # 3. OpenRouter
             elif "OpenRouter" in provider:
-                if "openrouter" in st.secrets:
-                    client = OpenAI(api_key=st.secrets["openrouter"]["api_key"], base_url=st.secrets["openrouter"]["base_url"])
-                else: return "❌ OpenRouter Secrets 未配置"
+                client = OpenAI(api_key=st.secrets["openrouter"]["api_key"], base_url=st.secrets["openrouter"]["base_url"])
             
-            # 4. Glama (新增) <--- 新增逻辑
             elif "Glama" in provider:
+                # 🔥 Glama 专项调试逻辑
                 if "glama" in st.secrets:
-                    client = OpenAI(
-                        api_key=st.secrets["glama"]["api_key"], 
-                        base_url=st.secrets["glama"]["base_url"]
-                    )
-                else: return "❌ Glama Secrets 未配置 (请在 .streamlit/secrets.toml 中添加 [glama])"
+                    base_url = st.secrets["glama"]["base_url"].strip() # 去除首尾空格
+                    # 强制去除末尾斜杠，防止 double slash 问题
+                    if base_url.endswith("/"): base_url = base_url[:-1]
+                    
+                    api_key = st.secrets["glama"]["api_key"]
+                    client = OpenAI(api_key=api_key, base_url=base_url)
+                    
+                    debug_info = f"\n[Debug] URL: {base_url} | Model: {target_model}"
+                else: return "❌ Glama Secrets 未配置"
             
             if not client: return "AI Client 初始化失败"
 
+            # 构造消息
             messages = [{"role": "system", "content": "你是一位资深会计讲师。回答请使用 Markdown 格式。"}]
             for h in history:
                 role = "assistant" if h['role'] == "model" else h['role']
                 messages.append({"role": role, "content": h['content']})
             messages.append({"role": "user", "content": prompt})
 
+            # 发起请求
             resp = client.chat.completions.create(
                 model=target_model, 
                 messages=messages, 
@@ -257,8 +257,11 @@ def call_ai_universal(prompt, history=[], model_override=None, timeout_override=
             return resp.choices[0].message.content
 
     except Exception as e:
-        return f"❌ 失败: AI 处理超时或中断 (当前限制 {current_timeout}s): {e}"
-
+        # 捕获错误并显示 Debug 信息
+        err_msg = str(e)
+        if "404" in err_msg and "Glama" in provider:
+            return f"❌ Glama 模型未找到 (404)。\n请尝试在模型名前加厂商前缀（如 google-vertex/gemini...）。{debug_info}"
+        return f"❌ 失败: AI 处理异常: {e} {debug_info if 'Glama' in provider else ''}"
 
 
 # --- 新增：主观题 AI 评分函数 ---
@@ -1971,6 +1974,7 @@ elif menu == "⚙️ 设置中心":
                 supabase.table("books").delete().eq("user_id", user_id).execute()
                 # 因为设置了级联删除(Cascade)，章节、题目、内容会自动删除
                 st.success("资料库已格式化")
+
 
 
 
