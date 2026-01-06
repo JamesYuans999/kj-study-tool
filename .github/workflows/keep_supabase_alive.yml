@@ -1,0 +1,37 @@
+name: Keep Supabase Alive
+
+on:
+  schedule:
+    # 每天 UTC 时间 00:00 运行一次 (北京时间早上8点)
+    - cron: '0 0 * * *'
+  # 允许你手动点击按钮运行 (用于测试)
+  workflow_dispatch:
+
+jobs:
+  ping_supabase:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake up Supabase via REST API
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          echo "正在连接 Supabase..."
+          
+          # 使用 curl 发送一个简单的 GET 请求
+          # 这里访问 'subjects' 表（或者你可以改成 'study_profile'），只读取 1 行数据
+          # 这足以产生 API 流量记录
+          
+          response=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$SUPABASE_URL/rest/v1/subjects?select=*&limit=1" \
+          -H "apikey: $SUPABASE_KEY" \
+          -H "Authorization: Bearer $SUPABASE_KEY")
+
+          echo "Supabase 响应状态码: $response"
+          
+          if [ "$response" -eq 200 ] || [ "$response" -eq 206 ]; then
+            echo "✅ 成功! 数据库处于活跃状态。"
+          else
+            echo "⚠️ 警告: 连接可能失败或项目已暂停，状态码: $response"
+            # 不让 Action 失败，以免每天收到报错邮件，只需记录即可
+            exit 0
+          fi
