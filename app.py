@@ -109,18 +109,29 @@ try:
     API_KEY = st.secrets["GOOGLE_API_KEY"]
     SUPABASE_URL = st.secrets["supabase"]["url"]
     SUPABASE_KEY = st.secrets["supabase"]["key"]
-    
-    # 代理配置 (如果 Secrets 里有)
-    if "env" in st.secrets:
-        os.environ["http_proxy"] = st.secrets["env"]["http_proxy"]
-        os.environ["https_proxy"] = st.secrets["env"]["https_proxy"]
+
+    # 修复：仅在非 Streamlit Cloud 环境或显式要求时才启用代理
+    # Streamlit Cloud 通常不需要代理即可访问 Supabase
+    # 建议直接注释掉下面这几行，或者确保云端 Secrets 不包含 [env]
+    # if "env" in st.secrets:
+    #     os.environ["http_proxy"] = st.secrets["env"]["http_proxy"]
+    #     os.environ["https_proxy"] = st.secrets["env"]["https_proxy"]
 except:
     st.error("🔒 Secrets 配置丢失！请检查 .streamlit/secrets.toml 文件。")
     st.stop()
 
+
 @st.cache_resource
 def init_supabase():
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
+    # 增加超时设置，防止网络波动导致的连接错误
+    return create_client(
+        SUPABASE_URL,
+        SUPABASE_KEY,
+        options=ClientOptions(
+            postgrest_client_timeout=10,
+            storage_client_timeout=10
+        )
+    )
 
 supabase = init_supabase()
 
