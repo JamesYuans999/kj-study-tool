@@ -139,6 +139,7 @@ supabase = init_supabase()
 if 'user_id' not in st.session_state:
     st.session_state.user_id = "test_user_001"
 user_id = st.session_state.user_id
+check_and_update_streak(user_id)
 
 # ==============================================================================
 # 3. 核心功能函数 (AI / DB / File)
@@ -161,6 +162,39 @@ def update_settings(uid, settings_dict):
         curr.update(settings_dict)
         supabase.table("study_profile").update({"settings": curr}).eq("user_id", uid).execute()
     except: pass
+
+
+def check_and_update_streak(uid):
+    """检查并更新连续打卡天数"""
+    try:
+        profile = get_user_profile(uid)
+        last_date_str = profile.get('last_active_date')
+        current_streak = profile.get('study_streak', 0)
+        today_str = str(datetime.date.today())
+
+        # 如果今天还没记录
+        if last_date_str != today_str:
+            new_streak = 1  # 默认重置
+
+            if last_date_str:
+                last_date = datetime.datetime.strptime(last_date_str, '%Y-%m-%d').date()
+                yesterday = datetime.date.today() - datetime.timedelta(days=1)
+
+                # 如果上次活跃是昨天，天数+1
+                if last_date == yesterday:
+                    new_streak = current_streak + 1
+                # 如果是更早之前，保持为 1 (重置)
+
+            # 更新数据库
+            supabase.table("study_profile").update({
+                "last_active_date": today_str,
+                "study_streak": new_streak
+            }).eq("user_id", uid).execute()
+
+            return new_streak
+    except Exception as e:
+        print(f"Streak Error: {e}")
+        return 0
 
 def save_ai_pref():
     """回调：保存模型选择"""
@@ -1403,28 +1437,56 @@ elif menu == "📝 章节特训":
                     st.info(f"💡 **解析：** {q_exp}")
 
                 # --- 存库逻辑 (通用) ---
-                save_key = f"saved_db_{idx}"
-                if save_key not in st.session_state:
-                    try:
-                         # 构造存库数据，主观题把 score 放入 user_response 或 备注
-                         resp_text = user_val
-                         if q_type == 'subjective':
-                             # 将分数追加到答案文本前，便于后续回顾
-                             score_val = st.session_state.get(f"grade_res_{idx}", {}).get('score', 0)
-                             resp_text = f"[AI评分:{score_val}] {user_val}"
-                         
-                         supabase.table("user_answers").insert({
-                            "user_id": user_id, 
-                            "question_id": q.get('id'), # 注意：AI出题可能没有ID，这里可能报错
-                            "user_response": resp_text, 
-                            "is_correct": is_correct_bool
-                        }).execute()
-                         st.session_state[save_key] = True
-                    except Exception as e:
-                        # 只有当题目有 ID (即已入库) 时才能存做题记录
-                        # 纯AI生成的临时题目如果没有ID，则跳过存储
-                        pass
+                    # --- 存库逻辑 (V5.1 增强版：含分数与AI评价) ---
+                    save_key = f"saved_db_{idx}"  # 利用 idx 生成唯一 Key，防止刷新页面重复插入
 
+                    if save_key not in st.session_state:
+                        try:
+                            # 1. 检查题目 ID 是否存在
+                            # (注：如果是 AI 临时生成的题目且未入库，q['id'] 可能为空，此时不存做题记录)
+                            qid = q.get('id')
+
+                            if qid:
+                                # 2. 计算分数与反馈内容
+                                final_score = 0
+                                final_feedback = ""
+
+                                if q_type == 'subjective':
+                                    # === 主观题 ===
+                                    # 从 Session 中获取之前 ai_grade_subjective 返回的结果
+                                    grade_data = st.session_state.get(f"grade_res_{idx}", {})
+                                    # 确保转为数字类型，防止 None
+                                    final_score = float(grade_data.get('score', 0))
+                                    final_feedback = str(grade_data.get('feedback', ''))
+                                else:
+                                    # === 客观题 (单选/多选) ===
+                                    # 逻辑简单：对就是 100 分，错就是 0 分
+                                    final_score = 100.0 if is_correct_bool else 0.0
+                                    final_feedback = ""  # 客观题通常不需要 AI 评价，留空即可
+
+                                # 3. 构造插入数据 Payload
+                                payload = {
+                                    "user_id": user_id,
+                                    "question_id": qid,
+                                    "user_response": user_val,  # 用户的原始作答
+                                    "is_correct": is_correct_bool,  # 布尔值
+                                    "score": final_score,  # 数值型分数
+                                    "ai_feedback": final_feedback,  # AI 评语
+                                    "exam_id": None  # 章节练习不属于模考，设为 Null
+                                }
+
+                                # 4. 执行数据库插入
+                                supabase.table("user_answers").insert(payload).execute()
+
+                                # 5. 标记为已保存 (关键步骤)
+                                st.session_state[save_key] = True
+
+                                # 可选：轻提示
+                                # st.toast("💾 记录已保存")
+
+                        except Exception as e:
+                            # 捕获异常，防止因网络波动导致整个页面崩溃
+                            print(f"❌ 存库失败 [QID: {q.get('id')}]: {e}")
             # 下一题
             st.divider()
             if st.button("➡️ 下一题", type="primary", use_container_width=True):
@@ -1563,6 +1625,50 @@ elif menu == "⚔️ 全真模考":
                 bar.progress((idx+1)/len(paper))
             
             session['report_data'] = detail_report
+
+            # === 🔥 新增：模考数据完整闭环入库 ===
+            if 'saved_exam_flag' not in session:  # 防止刷新重复提交
+                try:
+                    # 1. 先创建模考记录 (Mock Exam Header)
+                    exam_payload = {
+                        "user_id": user_id,
+                        "title": f"全真模考 {datetime.date.today()}",
+                        "mode": "full",
+                        "user_score": int(total_score),
+                        "exam_data": detail_report  # 存快照，以防题目被删
+                    }
+                    exam_res = supabase.table("mock_exams").insert(exam_payload).execute()
+
+                    # 获取新生成的 exam_id
+                    new_exam_id = exam_res.data[0]['id']
+
+                    # 2. 再批量插入做题详情，并关联 exam_id
+                    db_answers = []
+                    timestamp = datetime.datetime.now().isoformat()
+
+                    for item in detail_report:
+                        q_data = item['q']
+                        # 确保只存已入库的题目的 ID
+                        if q_data.get('id'):
+                            db_answers.append({
+                                "user_id": user_id,
+                                "question_id": q_data.get('id'),
+                                "exam_id": new_exam_id,  # <--- 关键：关联模考ID
+                                "user_response": item['u_ans'],
+                                "is_correct": item['is_correct'],
+                                "score": item.get('score', 0),
+                                "ai_feedback": item.get('feedback', ''),
+                                "created_at": timestamp
+                            })
+
+                    if db_answers:
+                        supabase.table("user_answers").insert(db_answers).execute()
+                        st.toast(f"💾 模考存档成功！ID: {new_exam_id}")
+                        session['saved_exam_flag'] = True
+
+                except Exception as e:
+                    st.error(f"模考存档失败: {e}")
+
             session['final_score'] = int(total_score)
             st.rerun()
 
@@ -1605,44 +1711,178 @@ elif menu == "📊 弱项分析":
     except: st.error("数据加载失败")
 
 # === ❌ 错题本 ===
+# =========================================================
+# ❌ 错题本 (V8.0: 修复主观题显示 + AI 深度私教模式)
+# =========================================================
 elif menu == "❌ 错题本":
-    st.title("❌ 错题集")
+    st.title("❌ 错题集 (智能私教版)")
+
+    # 1. 获取错题数据
     try:
-        errs = supabase.table("user_answers").select("*, question_bank(*)").eq("user_id", user_id).eq("is_correct", False).order("created_at", desc=True).execute().data
-    except: errs = []
-    
+        # 获取所有做错的记录，并关联题目详情
+        errs = supabase.table("user_answers").select("*, question_bank(*)").eq("user_id", user_id).eq("is_correct",
+                                                                                                      False).order(
+            "created_at", desc=True).execute().data
+    except Exception as e:
+        st.error(f"数据加载失败: {e}")
+        errs = []
+
+    # 2. 去重逻辑 (避免同一道题显示多次，只显示最近一次错误)
     uq = {}
     for e in errs:
-        if e['question_id'] not in uq: uq[e['question_id']] = e
-        
-    if not uq: st.success("无错题")
+        # 如果 question_bank 为空（可能题目被删了），跳过
+        if not e['question_bank']: continue
+        qid = e['question_id']
+        if qid not in uq: uq[qid] = e
+
+    if not uq:
+        st.success("🎉 太棒了！目前没有待消灭的错题。")
     else:
+        st.caption(f"共累计 {len(uq)} 道错题，加油消灭它们！")
+
+        # 3. 遍历展示错题
         for qid, e in uq.items():
             q = e['question_bank']
-            if not q: continue
-            with st.expander(f"🔴 {q['content'][:30]}..."):
-                st.markdown(f"**{q['content']}**")
-                for o in q['options']: st.markdown(f"<div class='option-item'>{o}</div>", unsafe_allow_html=True)
+
+            # --- 布局：题干区 ---
+            with st.expander(f"🔴 [{q.get('type', '未知')}] {q['content'][:30]}...", expanded=False):
+                # A. 题目详情渲染
+                st.markdown(f"### {q['content']}")
+
+                # 只有客观题才显示选项
+                q_type = q.get('type', 'single')
+                if q_type in ['single', 'multi'] and q.get('options'):
+                    st.markdown("---")
+                    for o in q['options']:
+                        # 高亮正确选项（如果需要提示的话，这里暂时只显示选项原文）
+                        st.markdown(f"<div class='option-item'>{o}</div>", unsafe_allow_html=True)
+
+                # B. 答案对比区
+                st.markdown("---")
                 c1, c2 = st.columns(2)
-                c1.error(f"错: {e['user_response']}"); c2.success(f"对: {q['correct_answer']}")
-                st.info(q['explanation'])
-                
-                # 功能区
-                h = e.get('ai_chat_history') or []
-                c_ai, c_rm = st.columns([3,1])
-                if c_ai.button("🤔 AI 举例", key=f"x_ai_{qid}"):
-                    r = call_ai_universal(f"举例解释：{q['content']}。")
-                    if r:
-                        h.append({"role":"model", "content":r})
-                        supabase.table("user_answers").update({"ai_chat_history":h}).eq("id", e['id']).execute()
-                        st.rerun()
-                
-                if c_rm.button("✅ 移除", key=f"x_rm_{qid}"):
-                    supabase.table("user_answers").update({"is_correct":True}).eq("question_id", qid).execute()
+                with c1:
+                    st.error(f"❌ 你的答案：\n{e['user_response']}")
+                with c2:
+                    st.success(f"✅ 正确答案：\n{q['correct_answer']}")
+
+                # C. 静态解析 (如果有)
+                if q.get('explanation'):
+                    with st.chat_message("assistant", avatar="📖"):
+                        st.write(f"**参考解析：** {q['explanation']}")
+
+                # --- AI 私教交互区 ---
+                st.markdown("### 👩‍🏫 AI 私教辅导")
+
+                # 读取历史对话
+                chat_history = e.get('ai_chat_history') or []
+
+                # 1. 展示历史聊天记录
+                for msg in chat_history:
+                    role = "user" if msg['role'] == "user" else "ai"
+                    avatar = "🧑‍🎓" if role == "user" else "🤖"
+                    # 使用 Streamlit 原生 chat 组件，体验更好
+                    with st.chat_message(role, avatar=avatar):
+                        st.markdown(msg['content'])
+
+                # 2. AI 触发按钮
+                c_act1, c_act2 = st.columns([1, 1])
+
+                # 按钮 1: 请求 AI 深度解析 (这里实现了你的核心需求)
+                trigger_ai = False
+                if not chat_history:
+                    # 如果还没聊过，显示“请 AI 老师讲题”
+                    if c_act1.button("🙋‍♂️ 我没懂，请 AI 老师举例讲解", key=f"ai_teach_{qid}", type="primary"):
+                        trigger_ai = True
+                else:
+                    # 如果聊过了，提供追加提问框
+                    user_input = st.chat_input(f"关于这道题还有疑问？(ID: {qid})")
+                    if user_input:
+                        # 追加用户提问到历史
+                        chat_history.append({"role": "user", "content": user_input})
+                        # 更新数据库，防止刷新丢失
+                        supabase.table("user_answers").update({"ai_chat_history": chat_history}).eq("id",
+                                                                                                    e['id']).execute()
+                        trigger_ai = True  # 触发 AI 回复
+
+                # 3. 核心：构造超级 Prompt
+                if trigger_ai:
+                    with st.spinner("🤖 AI 老师正在分析你的错误逻辑..."):
+                        # === 🌟 核心优化点：构建包含全量上下文的 Prompt ===
+
+                        # 格式化选项字符串
+                        options_text = ""
+                        if q_type in ['single', 'multi'] and q.get('options'):
+                            options_text = "\n".join([f"  {opt}" for opt in q['options']])
+                        else:
+                            options_text = "（本题为主观题，无选项）"
+
+                        # 区分是“首次讲解”还是“后续追问”
+                        if len(chat_history) == 0 or (len(chat_history) == 1 and chat_history[0]['role'] == 'user'):
+                            # 首次讲解 Prompt
+                            prompt = f"""
+                            【角色设定】
+                            你是一位幽默、擅长用生活案例教学的资深会计讲师。
+
+                            【任务】
+                            学生做错了一道题，请你进行辅导。
+
+                            【题目信息】
+                            题目：{q['content']}
+                            选项：
+                            {options_text}
+
+                            【学生情况】
+                            学生错误答案：{e['user_response']}
+                            正确标准答案：{q['correct_answer']}
+                            参考静态解析：{q.get('explanation', '无')}
+
+                            【讲解要求】
+                            1. 🕵️ **错因诊断**：分析学生为什么会选错（或写错）？那个错误答案的陷阱在哪里？
+                            2. 💡 **原理解析**：用大白话解释正确答案背后的会计准则。
+                            3. 🍎 **生活举例**：请务必举一个**生活中的例子**（如买菜、开奶茶店、谈恋爱等）来类比这个会计概念，帮助记忆。
+                            4. 语气要鼓励学生，不要机械复读解析。
+                            """
+                            # 将这个“系统级指令”虽然不直接展示给用户，但作为 prompt 发送
+                            # 为了 UI 好看，我们不在聊天记录里显示这个长 Prompt，只显示 AI 的回复
+                        else:
+                            # 后续追问 Prompt (带上之前的上下文)
+                            # 这里简化处理，直接把整个历史扔给 universal 函数处理，它会自动拼接历史
+                            # 我们只需要构造最新的 system/user prompt 即可
+                            last_q = chat_history[-1]['content']
+                            prompt = f"针对这道题（{q['content']}），学生追问：{last_q}。请继续用通俗易懂的方式解答。"
+
+                        # 调用 AI
+                        # 注意：call_ai_universal 内部会处理 history，这里为了精准控制，
+                        # 如果是第一次，我们不传 history (因为 prompt 里已经包含了所有信息)
+                        # 如果是追问，我们传 history
+
+                        if not chat_history:
+                            ai_reply = call_ai_universal(prompt, history=[])
+                        else:
+                            # 对于追问，传入除最后一条之外的历史（因为 universal 会把 prompt 作为最新一条）
+                            # 实际上 universal 内部是 history + prompt，所以这里直接传 prompt 即可，history 保持同步
+                            ai_reply = call_ai_universal(last_q if len(chat_history) > 0 else prompt,
+                                                         history=chat_history[:-1])
+
+                        if ai_reply:
+                            # 存入 AI 回复
+                            chat_history.append({"role": "model", "content": ai_reply})
+
+                            # 更新数据库
+                            supabase.table("user_answers").update({"ai_chat_history": chat_history}).eq("id", e[
+                                'id']).execute()
+
+                            # 强制刷新页面以显示新消息
+                            st.rerun()
+
+                # 按钮 2: 移除错题
+                if c_act2.button("✅ 我学会了，移出错题本", key=f"rm_{qid}"):
+                    # 逻辑：将 is_correct 设为 True，或者直接删除记录？
+                    # 建议设为 True，这样保留做题记录但不在错题本显示
+                    supabase.table("user_answers").update({"is_correct": True}).eq("id", e['id']).execute()
+                    st.toast("🎉 已消灭一道错题！")
+                    time.sleep(1)
                     st.rerun()
-                    
-                for m in h:
-                    st.markdown(f"<div class='chat-{'ai' if m['role']=='model' else 'user'}'>{m['content']}</div>", unsafe_allow_html=True)
 
 
 
