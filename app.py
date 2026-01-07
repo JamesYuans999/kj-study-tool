@@ -578,14 +578,28 @@ with st.sidebar:
         try:
             target = datetime.datetime.strptime(profile['exam_date'], '%Y-%m-%d').date()
             today = datetime.date.today()
+
+            # 核心修复逻辑：
             if target < today:
-                next_y = today.year + 1
-                target = datetime.date(next_y, 9, 6)
-                st.metric("⏳ 备战明年", f"{(target-today).days} 天", delta=f"{next_y}赛季")
+                # 如果存的日期过期了，先看看“今年的考试”是不是还没到？
+                this_year_exam = datetime.date(today.year, 9, 6)  # 假设考试在9月
+
+                if today < this_year_exam:
+                    # 如果还没到今年的9月，目标就是今年
+                    target = this_year_exam
+                    label = f"{today.year}赛季"
+                else:
+                    # 如果今年9月也过了，那就备战明年
+                    target = datetime.date(today.year + 1, 9, 6)
+                    label = f"{today.year + 1}赛季"
+
+                days = (target - today).days
+                st.metric("⏳ 备战考试", f"{days} 天", delta=label)
             else:
                 days = (target - today).days
-                st.metric("⏳ 距离考试", f"{days} 天", delta="冲刺" if days<30 else "稳住")
-        except: pass
+                st.metric("⏳ 距离考试", f"{days} 天", delta="冲刺" if days < 30 else "稳住")
+        except Exception as e:
+            print(f"Date Error: {e}")
 
 # ==============================================================================
 # 5. 各页面主逻辑 (V3.0 完整复刻版)
@@ -597,17 +611,37 @@ if menu == "🏠 仪表盘":
     exam_date_str = profile.get('exam_date')
     today = datetime.date.today()
     days_left = 0
-    is_next_year = False
-    
+    display_year = today.year
+
     if exam_date_str:
-        target_date = datetime.datetime.strptime(exam_date_str, '%Y-%m-%d').date()
-        if target_date < today:
-            target_date = datetime.date(today.year + 1, 9, 6)
-            is_next_year = True
-        days_left = (target_date - today).days
-    
-    title_html = f"### 🍂 备战 <span style='color:#00C090'>2026</span>" if is_next_year else f"### 🌞 冲刺 <span style='color:#ff4b4b'>{days_left}</span> 天"
-    msg = "种一棵树最好的时间是十年前，其次是现在。" if is_next_year else ("稳住！你背的每一个分录，都是救命稻草！" if days_left < 60 else "现在的从容，就是考场上的噩梦。")
+        try:
+            target_date = datetime.datetime.strptime(exam_date_str, '%Y-%m-%d').date()
+
+            # 核心修复逻辑：
+            if target_date < today:
+                # 检查今年考试是否过期
+                this_year_exam = datetime.date(today.year, 9, 6)
+                if today < this_year_exam:
+                    target_date = this_year_exam
+                    display_year = today.year
+                else:
+                    target_date = datetime.date(today.year + 1, 9, 6)
+                    display_year = today.year + 1
+            else:
+                display_year = target_date.year
+
+            days_left = (target_date - today).days
+        except:
+            days_left = 0
+
+    # 动态标题
+    title_html = f"### 🍂 备战 <span style='color:#00C090'>{display_year}</span>"
+    msg = "种一棵树最好的时间是十年前，其次是现在。"
+
+    # 如果天数很少（比如冲刺阶段），换个标语
+    if days_left > 0 and days_left < 60:
+        title_html = f"### 🌞 冲刺 <span style='color:#ff4b4b'>{days_left}</span> 天"
+        msg = "现在的从容，就是考场上的噩梦。"
 
     st.markdown(title_html, unsafe_allow_html=True)
     st.info(f"👨‍🏫 **班主任说：** {msg}")
