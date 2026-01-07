@@ -1751,12 +1751,14 @@ elif menu == "📊 弱项分析":
 # =========================================================
 # ❌ 错题本 (V8.0: 修复主观题显示 + AI 深度私教模式)
 # =========================================================
+# =========================================================
+# ❌ 错题本 (V8.1: 含删除/重生成功能的完整版)
+# =========================================================
 elif menu == "❌ 错题本":
     st.title("❌ 错题集 (智能私教版)")
 
     # 1. 获取错题数据
     try:
-        # 获取所有做错的记录，并关联题目详情
         errs = supabase.table("user_answers").select("*, question_bank(*)").eq("user_id", user_id).eq("is_correct",
                                                                                                       False).order(
             "created_at", desc=True).execute().data
@@ -1764,10 +1766,9 @@ elif menu == "❌ 错题本":
         st.error(f"数据加载失败: {e}")
         errs = []
 
-    # 2. 去重逻辑 (避免同一道题显示多次，只显示最近一次错误)
+    # 2. 去重逻辑
     uq = {}
     for e in errs:
-        # 如果 question_bank 为空（可能题目被删了），跳过
         if not e['question_bank']: continue
         qid = e['question_id']
         if qid not in uq: uq[qid] = e
@@ -1783,18 +1784,21 @@ elif menu == "❌ 错题本":
 
             # --- 布局：题干区 ---
             with st.expander(f"🔴 [{q.get('type', '未知')}] {q['content'][:30]}...", expanded=False):
-                # A. 题目详情渲染
+                # A. 题目详情
                 st.markdown(f"### {q['content']}")
-
-                # 只有客观题才显示选项
                 q_type = q.get('type', 'single')
+
+                # 选项字符串生成（用于 Prompt）
+                options_text = ""
                 if q_type in ['single', 'multi'] and q.get('options'):
                     st.markdown("---")
                     for o in q['options']:
-                        # 高亮正确选项（如果需要提示的话，这里暂时只显示选项原文）
                         st.markdown(f"<div class='option-item'>{o}</div>", unsafe_allow_html=True)
+                    options_text = "\n".join([f"  {opt}" for opt in q['options']])
+                else:
+                    options_text = "（本题为主观题，无选项）"
 
-                # B. 答案对比区
+                # B. 答案对比
                 st.markdown("---")
                 c1, c2 = st.columns(2)
                 with c1:
@@ -1802,7 +1806,6 @@ elif menu == "❌ 错题本":
                 with c2:
                     st.success(f"✅ 正确答案：\n{q['correct_answer']}")
 
-                # C. 静态解析 (如果有)
                 if q.get('explanation'):
                     with st.chat_message("assistant", avatar="📖"):
                         st.write(f"**参考解析：** {q['explanation']}")
@@ -1813,112 +1816,131 @@ elif menu == "❌ 错题本":
                 # 读取历史对话
                 chat_history = e.get('ai_chat_history') or []
 
-                # 1. 展示历史聊天记录
-                for msg in chat_history:
+                # === 🔥 修改点：带操作按钮的消息展示循环 ===
+                # 我们需要修改 chat_history，所以用一个副本或标记来处理删除/重生成
+                action_triggered = False  # 标记本次循环是否有操作，避免多次 rerun
+
+                for idx, msg in enumerate(chat_history):
                     role = "user" if msg['role'] == "user" else "ai"
                     avatar = "🧑‍🎓" if role == "user" else "🤖"
-                    # 使用 Streamlit 原生 chat 组件，体验更好
+
                     with st.chat_message(role, avatar=avatar):
                         st.markdown(msg['content'])
 
-                # 2. AI 触发按钮
+                        # 仅为 AI 的回复添加操作按钮
+                        if role == "ai":
+                            c_del, c_regen, c_void = st.columns([1, 1, 6])
+
+                            # 🗑️ 删除按钮
+                            if c_del.button("🗑️", key=f"del_{qid}_{idx}", help="删除这条回答"):
+                                chat_history.pop(idx)
+                                # 如果删除的是回答，且上一条是用户的追问，通常也应该把上一条没用的追问删掉，
+                                # 但为了灵活，这里只删当前这条。
+                                supabase.table("user_answers").update({"ai_chat_history": chat_history}).eq("id", e[
+                                    'id']).execute()
+                                st.rerun()
+
+                            # 🔄 重生成按钮
+                            if c_regen.button("🔄", key=f"reg_{qid}_{idx}", help="对该回答不满意？重新生成"):
+                                with st.spinner("🔄 AI 正在重写..."):
+                                    # 1. 先删掉旧的
+                                    chat_history.pop(idx)
+
+                                    # 2. 确定 Prompt
+                                    if idx == 0:
+                                        # 情况 A: 这是第一条讲解。
+                                        # 我们需要重建那个“超级 Prompt”。
+                                        prompt = f"""
+                                        【角色】幽默资深会计讲师。
+                                        【任务】辅导错题。
+                                        【题目】{q['content']}
+                                        【选项】{options_text}
+                                        【学生错解】{e['user_response']}
+                                        【标准答案】{q['correct_answer']}
+                                        【解析】{q.get('explanation', '无')}
+                                        【要求】
+                                        1. 🕵️ 诊断错因：为什么会选错？
+                                        2. 💡 原理解析：大白话解释准则。
+                                        3. 🍎 生活举例：必须举生活例子类比。
+                                        """
+                                        # 调用 AI (不带历史，因为这是第一条)
+                                        new_reply = call_ai_universal(prompt, history=[])
+
+                                    else:
+                                        # 情况 B: 这是后续追问的回答。
+                                        # 它的 Prompt 是上一条消息（idx-1）
+                                        prev_user_msg = chat_history[idx - 1]['content']
+                                        # 调用 AI (带上之前的历史作为上下文)
+                                        # 注意：history 参数应该是 idx-1 之前的所有内容
+                                        context_history = chat_history[:idx - 1]
+                                        new_reply = call_ai_universal(prev_user_msg, history=context_history)
+
+                                    # 3. 存入新回答
+                                    if new_reply:
+                                        chat_history.insert(idx, {"role": "model", "content": new_reply})
+                                        supabase.table("user_answers").update({"ai_chat_history": chat_history}).eq(
+                                            "id", e['id']).execute()
+                                        st.rerun()
+
+                # === 底部交互逻辑 (保持不变) ===
                 c_act1, c_act2 = st.columns([1, 1])
 
-                # 按钮 1: 请求 AI 深度解析 (这里实现了你的核心需求)
-                trigger_ai = False
+                trigger_ai_first = False
+                trigger_ai_followup = False
+                user_question_text = ""
+
+                # 场景 1: 还没聊过 (或第一条被删了)
                 if not chat_history:
-                    # 如果还没聊过，显示“请 AI 老师讲题”
                     if c_act1.button("🙋‍♂️ 我没懂，请 AI 老师举例讲解", key=f"ai_teach_{qid}", type="primary"):
-                        trigger_ai = True
+                        trigger_ai_first = True
+
+                # 场景 2: 已经聊过
                 else:
-                    # 如果聊过了，提供追加提问框
-                    user_input = st.chat_input(f"关于这道题还有疑问？(ID: {qid})")
+                    user_input = st.chat_input(f"追问 AI 老师 (ID: {qid})")
                     if user_input:
-                        # 追加用户提问到历史
                         chat_history.append({"role": "user", "content": user_input})
-                        # 更新数据库，防止刷新丢失
                         supabase.table("user_answers").update({"ai_chat_history": chat_history}).eq("id",
                                                                                                     e['id']).execute()
-                        trigger_ai = True  # 触发 AI 回复
+                        trigger_ai_followup = True
+                        user_question_text = user_input
+                        st.rerun()  # 立即刷新显示用户的提问
 
-                # 3. 核心：构造超级 Prompt
-                if trigger_ai:
-                    with st.spinner("🤖 AI 老师正在分析你的错误逻辑..."):
-                        # === 🌟 核心优化点：构建包含全量上下文的 Prompt ===
-
-                        # 格式化选项字符串
-                        options_text = ""
-                        if q_type in ['single', 'multi'] and q.get('options'):
-                            options_text = "\n".join([f"  {opt}" for opt in q['options']])
-                        else:
-                            options_text = "（本题为主观题，无选项）"
-
-                        # 区分是“首次讲解”还是“后续追问”
-                        if len(chat_history) == 0 or (len(chat_history) == 1 and chat_history[0]['role'] == 'user'):
-                            # 首次讲解 Prompt
+                # === AI 生成逻辑执行区 ===
+                if trigger_ai_first or (len(chat_history) > 0 and chat_history[-1]['role'] == 'user'):
+                    # 这里加一个判断，只有当最后一条是 user 时才自动触发 AI，
+                    # 避免页面刷新时意外触发
+                    with st.spinner("🤖 AI 老师正在思考..."):
+                        if not chat_history:  # 首次
                             prompt = f"""
-                            【角色设定】
-                            你是一位幽默、擅长用生活案例教学的资深会计讲师。
-
-                            【任务】
-                            学生做错了一道题，请你进行辅导。
-
-                            【题目信息】
-                            题目：{q['content']}
-                            选项：
-                            {options_text}
-
-                            【学生情况】
-                            学生错误答案：{e['user_response']}
-                            正确标准答案：{q['correct_answer']}
-                            参考静态解析：{q.get('explanation', '无')}
-
-                            【讲解要求】
-                            1. 🕵️ **错因诊断**：分析学生为什么会选错（或写错）？那个错误答案的陷阱在哪里？
-                            2. 💡 **原理解析**：用大白话解释正确答案背后的会计准则。
-                            3. 🍎 **生活举例**：请务必举一个**生活中的例子**（如买菜、开奶茶店、谈恋爱等）来类比这个会计概念，帮助记忆。
-                            4. 语气要鼓励学生，不要机械复读解析。
+                            【角色】幽默资深会计讲师。
+                            【任务】辅导错题。
+                            【题目】{q['content']}
+                            【选项】{options_text}
+                            【学生错解】{e['user_response']}
+                            【标准答案】{q['correct_answer']}
+                            【解析】{q.get('explanation', '无')}
+                            【要求】
+                            1. 🕵️ 诊断错因。
+                            2. 💡 原理解析。
+                            3. 🍎 生活举例（必选）。
                             """
-                            # 将这个“系统级指令”虽然不直接展示给用户，但作为 prompt 发送
-                            # 为了 UI 好看，我们不在聊天记录里显示这个长 Prompt，只显示 AI 的回复
-                        else:
-                            # 后续追问 Prompt (带上之前的上下文)
-                            # 这里简化处理，直接把整个历史扔给 universal 函数处理，它会自动拼接历史
-                            # 我们只需要构造最新的 system/user prompt 即可
+                            reply = call_ai_universal(prompt, history=[])
+                        else:  # 追问
                             last_q = chat_history[-1]['content']
-                            prompt = f"针对这道题（{q['content']}），学生追问：{last_q}。请继续用通俗易懂的方式解答。"
+                            # 传入除最后一条（也就是当前问题）之外的历史
+                            reply = call_ai_universal(last_q, history=chat_history[:-1])
 
-                        # 调用 AI
-                        # 注意：call_ai_universal 内部会处理 history，这里为了精准控制，
-                        # 如果是第一次，我们不传 history (因为 prompt 里已经包含了所有信息)
-                        # 如果是追问，我们传 history
-
-                        if not chat_history:
-                            ai_reply = call_ai_universal(prompt, history=[])
-                        else:
-                            # 对于追问，传入除最后一条之外的历史（因为 universal 会把 prompt 作为最新一条）
-                            # 实际上 universal 内部是 history + prompt，所以这里直接传 prompt 即可，history 保持同步
-                            ai_reply = call_ai_universal(last_q if len(chat_history) > 0 else prompt,
-                                                         history=chat_history[:-1])
-
-                        if ai_reply:
-                            # 存入 AI 回复
-                            chat_history.append({"role": "model", "content": ai_reply})
-
-                            # 更新数据库
+                        if reply:
+                            chat_history.append({"role": "model", "content": reply})
                             supabase.table("user_answers").update({"ai_chat_history": chat_history}).eq("id", e[
                                 'id']).execute()
-
-                            # 强制刷新页面以显示新消息
                             st.rerun()
 
-                # 按钮 2: 移除错题
-                if c_act2.button("✅ 我学会了，移出错题本", key=f"rm_{qid}"):
-                    # 逻辑：将 is_correct 设为 True，或者直接删除记录？
-                    # 建议设为 True，这样保留做题记录但不在错题本显示
+                # 移出按钮
+                if c_act2.button("✅ 我学会了，移出", key=f"rm_{qid}"):
                     supabase.table("user_answers").update({"is_correct": True}).eq("id", e['id']).execute()
-                    st.toast("🎉 已消灭一道错题！")
-                    time.sleep(1)
+                    st.toast("已移出")
+                    time.sleep(1);
                     st.rerun()
 
 
