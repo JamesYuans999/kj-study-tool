@@ -123,7 +123,7 @@ except:
 
 @st.cache_resource
 def init_supabase():
-    # 增加超时设置，防止网络波动导致的连接错误
+
     return create_client(
         SUPABASE_URL,
         SUPABASE_KEY,
@@ -2232,6 +2232,7 @@ elif menu == "⚙️ 设置中心":
                 supabase.table("books").delete().eq("user_id", user_id).execute()
                 # 因为设置了级联删除(Cascade)，章节、题目、内容会自动删除
                 st.success("资料库已格式化")
+
 
 
 
