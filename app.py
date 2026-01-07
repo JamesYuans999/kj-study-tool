@@ -139,30 +139,6 @@ supabase = init_supabase()
 if 'user_id' not in st.session_state:
     st.session_state.user_id = "test_user_001"
 user_id = st.session_state.user_id
-check_and_update_streak(user_id)
-
-# ==============================================================================
-# 3. 核心功能函数 (AI / DB / File)
-# ==============================================================================
-
-# --- 数据库 Helper 函数 ---
-def get_user_profile(uid):
-    try:
-        res = supabase.table("study_profile").select("*").eq("user_id", uid).execute()
-        if not res.data:
-            supabase.table("study_profile").insert({"user_id": uid}).execute()
-            return {}
-        return res.data[0]
-    except: return {}
-
-def update_settings(uid, settings_dict):
-    """更新用户设置"""
-    try:
-        curr = get_user_profile(uid).get('settings') or {}
-        curr.update(settings_dict)
-        supabase.table("study_profile").update({"settings": curr}).eq("user_id", uid).execute()
-    except: pass
-
 
 def check_and_update_streak(uid):
     """检查并更新连续打卡天数"""
@@ -195,6 +171,33 @@ def check_and_update_streak(uid):
     except Exception as e:
         print(f"Streak Error: {e}")
         return 0
+
+check_and_update_streak(user_id)
+
+# ==============================================================================
+# 3. 核心功能函数 (AI / DB / File)
+# ==============================================================================
+
+# --- 数据库 Helper 函数 ---
+def get_user_profile(uid):
+    try:
+        res = supabase.table("study_profile").select("*").eq("user_id", uid).execute()
+        if not res.data:
+            supabase.table("study_profile").insert({"user_id": uid}).execute()
+            return {}
+        return res.data[0]
+    except: return {}
+
+def update_settings(uid, settings_dict):
+    """更新用户设置"""
+    try:
+        curr = get_user_profile(uid).get('settings') or {}
+        curr.update(settings_dict)
+        supabase.table("study_profile").update({"settings": curr}).eq("user_id", uid).execute()
+    except: pass
+
+
+
 
 def save_ai_pref():
     """回调：保存模型选择"""
@@ -2232,8 +2235,6 @@ elif menu == "⚙️ 设置中心":
                 supabase.table("books").delete().eq("user_id", user_id).execute()
                 # 因为设置了级联删除(Cascade)，章节、题目、内容会自动删除
                 st.success("资料库已格式化")
-
-
 
 
 
