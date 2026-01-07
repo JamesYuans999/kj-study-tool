@@ -1088,10 +1088,28 @@ elif menu == "📂 智能拆书 & 资料":
                                                 st.warning(f"章节 {row['title']} 处理时遇到 API 限流，跳过。")
                                             
                                             progress_bar.progress((i+1)/len(edited_df))
-                                        
-                                        st.success("🎉 入库完成！")
-                                        time.sleep(2); st.rerun()
-                                    except Exception as e: st.error(f"出错: {e}")
+
+                                        # === 循环结束，进度条拉满 ===
+                                        progress_bar.progress(100)
+                                        st.success(f"🎉 入库完成！书籍《{up_file.name}》已保存。")
+
+                                        # === 🔥 新增：继续上传交互 ===
+                                        st.markdown("---")
+                                        st.info("👇 点击下方按钮清空当前状态，准备上传下一份。")
+
+                                        if st.button("🔄 继续上传新资料", type="primary", key="btn_continue_pdf"):
+                                            # 🧹 关键：清除与当前书籍有关的所有缓存状态
+                                            keys_to_clear = ['toc_result', 'toc_config', 'preview_data',
+                                                             'ans_mode_cache']
+                                            for k in keys_to_clear:
+                                                if k in st.session_state:
+                                                    del st.session_state[k]
+
+                                            # 刷新页面，此时因为缓存被删，界面会回到 Step 1
+                                            st.rerun()
+
+                                    except Exception as e:
+                                        st.error(f"出错: {e}")
 
                         # --- 纯教材保存逻辑 ---
                         elif "纯教材" in doc_type:
@@ -1179,11 +1197,20 @@ elif menu == "📂 智能拆书 & 资料":
                             save_material_v3(cid, content, user_id)
                             
                             bar.progress((i+1)/total_rows)
-                            
+
+                        # === 循环结束 ===
+                        bar.progress(100)
+
+                        # ✨✨✨ 这里也要放烟花！✨✨✨
+                        st.balloons()
                         st.success(f"🎉 导入成功！已创建书籍：《{book_name_input}》")
-                        time.sleep(2)
-                        st.rerun()
-                        
+
+                        # === 🔥 新增：继续上传交互 ===
+                        st.markdown("---")
+                        if st.button("🔄 继续导入下一个 Excel", type="primary", key="btn_continue_excel"):
+                            # Excel 模式比较简单，直接刷新即可清空上传组件
+                            st.rerun()
+
                     except Exception as e:
                         st.error(f"导入失败: {e}。\n请确保 Excel 包含【章节名称】和【正文内容】两列。")
 
