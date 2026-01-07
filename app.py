@@ -7,7 +7,7 @@ import pdfplumber
 import time
 import docx
 import random
-from supabase import create_client
+from supabase import create_client, ClientOptions
 import plotly.express as px
 from openai import OpenAI
 import streamlit.components.v1 as components
@@ -2232,6 +2232,7 @@ elif menu == "⚙️ 设置中心":
                 supabase.table("books").delete().eq("user_id", user_id).execute()
                 # 因为设置了级联删除(Cascade)，章节、题目、内容会自动删除
                 st.success("资料库已格式化")
+
 
 
 
