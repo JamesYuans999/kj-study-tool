@@ -744,18 +744,21 @@ elif menu == "📂 智能拆书 & 资料":
                         }
 
                         # --- Step 1: 目录分析配置 (V7.1: 新增无目录模式) ---
+                        # --- Step 1: 目录分析配置 (V8.2: 新增无目录模式) ---
                         if 'toc_result' not in st.session_state:
                             c_info = st.container()
                             with c_info:
                                 st.info(f"✅ 文件已加载，共 {total_pages} 页。")
 
-                                # 1. 核心开关：是否有目录
-                                has_toc = st.checkbox("📚 文档包含目录页 (AI 自动识别)", value=True,
-                                                      help="如果文档没有目录，或者是整套试卷，请取消勾选。系统将自动把全文视为一个章节。")
+                                # 1. 核心选项：是否有目录
+                                has_toc = st.checkbox("📑 该文档包含目录页 (需 AI 识别)", value=True,
+                                                      help="如果取消勾选，将直接把整份文档视为一个章节，跳过 AI 分析。")
 
                                 col_toc, col_body = st.columns(2)
 
-                                # A. 有目录模式
+                                # 变量初始化
+                                ts, te, cs = 1, 1, 1
+
                                 if has_toc:
                                     with col_toc:
                                         st.markdown("**1. 目录范围**")
@@ -763,41 +766,38 @@ elif menu == "📂 智能拆书 & 资料":
                                                              st.session_state.toc_config['toc_s'])
                                         te = st.number_input("目录结束页", 1, total_pages,
                                                              st.session_state.toc_config['toc_e'])
+
                                     with col_body:
                                         st.markdown("**2. 正文起始**")
                                         cs = st.number_input("正文(第一章)开始页", 1, total_pages,
                                                              st.session_state.toc_config['content_s'])
-
-                                # B. 无目录模式
                                 else:
-                                    with col_body:
-                                        st.markdown("**1. 正文起始**")
-                                        cs = st.number_input("内容开始页", 1, total_pages, 1,
-                                                             help="跳过封面或前言，直接从题目/正文开始的页码")
-                                        ts, te = 0, 0  # 占位
+                                    st.warning(
+                                        "⚡ 无目录模式：系统将默认生成 1 个章节（覆盖全文）。你可以在下一步手动修改页码。")
 
                                 # 答案位置配置 (通用)
                                 ans_mode = "无"
                                 as_page = 0
                                 if "习题库" in doc_type:
-                                    st.markdown("**3. 答案位置**")
+                                    st.markdown("---")
+                                    st.markdown("**3. 答案位置** (AI 提取时会根据此设置寻找答案)")
                                     ans_mode = st.radio("答案在哪？", ["🅰️ 紧跟在题目后面", "🅱️ 集中在文件末尾",
                                                                       "🇨 集中在每一章末尾"])
                                     if ans_mode == "🅱️ 集中在文件末尾":
+                                        default_ans_page = max(1, total_pages - 5)
                                         as_page = st.number_input("答案区域开始页", 1, total_pages,
-                                                                  value=max(1, total_pages - 5))
+                                                                  value=default_ans_page)
 
-                                st.divider()
+                                st.markdown("---")
 
-                                # --- 执行逻辑分流 ---
+                                # --- 分支执行逻辑 ---
                                 if has_toc:
-                                    # === 路径 A: AI 分析目录 ===
+                                    # A. 有目录 -> 走 AI 分析
                                     with st.expander("🛠️ AI 指令微调 (目录分析)", expanded=False):
                                         default_toc_prompt = f"""
                         任务：分析目录文本，推算物理页码。
                         总页数：{total_pages}。
                         正文起始偏移：用户称第一章始于第 {cs} 页。
-
                         请提取章节名称，并推算每一章在PDF的【物理起始页码】。
                         要求：
                         1. 返回纯 JSON 列表。
@@ -810,30 +810,51 @@ elif menu == "📂 智能拆书 & 资料":
                                         with st.spinner("AI 正在阅读目录..."):
                                             up_file.seek(0)
                                             toc_txt = extract_pdf(up_file, ts, te)
-                                            if len(toc_txt) < 10:
-                                                st.error("⚠️ 目录页文字太少，请检查页码或切换为【无目录模式】。")
-                                            else:
-                                                full_p = f"{user_toc_prompt}\n\n目录文本：\n{toc_txt[:10000]}"
-                                                res = call_ai_universal(full_p)
-                                                # ... (此处保持原本的 AI 解析逻辑不变) ...
-                                                if res:
-                                                    try:
-                                                        clean = res.replace("```json", "").replace("```", "").strip()
-                                                        s = clean.find('[');
-                                                        e = clean.rfind(']') + 1
-                                                        data = json.loads(clean[s:e])
-                                                        # 注入答案页信息
-                                                        for row in data:
-                                                            row[
-                                                                'ans_start_page'] = as_page if "文件末尾" in ans_mode else 0
-                                                            row[
-                                                                'ans_end_page'] = total_pages if "文件末尾" in ans_mode else 0
+                                            full_p = f"{user_toc_prompt}\n\n目录文本：\n{toc_txt[:10000]}"
 
-                                                        st.session_state.toc_result = data
-                                                        st.session_state.ans_mode_cache = ans_mode
-                                                        st.rerun()
-                                                    except Exception as e:
-                                                        st.error(f"AI 解析失败: {e}")
+                                            # 调用 AI
+                                            res = call_ai_universal(full_p)
+
+                                            if res and "Quota" not in res:
+                                                try:
+                                                    clean = res.replace("```json", "").replace("```", "").strip()
+                                                    s = clean.find('[');
+                                                    e = clean.rfind(']') + 1
+                                                    data = json.loads(clean[s:e])
+
+                                                    # 注入答案页信息
+                                                    for row in data:
+                                                        row['ans_start_page'] = as_page if "文件末尾" in ans_mode else 0
+                                                        row[
+                                                            'ans_end_page'] = total_pages if "文件末尾" in ans_mode else 0
+
+                                                    st.session_state.toc_result = data
+                                                    st.session_state.ans_mode_cache = ans_mode
+                                                    st.rerun()
+                                                except Exception as e:
+                                                    st.error(f"解析失败: {e}")
+                                            else:
+                                                st.error(f"AI 响应异常: {res}")
+
+                                else:
+                                    # B. 无目录 -> 直接生成默认结构
+                                    if st.button("⚡ 跳过分析，直接下一步 (生成默认结构)", type="primary"):
+                                        # 自动计算结束页：如果是"答案在末尾"，正文结束就在答案开始前
+                                        content_end = (as_page - 1) if (
+                                                    "文件末尾" in ans_mode and as_page > 1) else total_pages
+
+                                        # 构造单章节结构
+                                        default_data = [{
+                                            "title": "全文内容",
+                                            "start_page": 1,
+                                            "end_page": content_end,
+                                            "ans_start_page": as_page if "文件末尾" in ans_mode else 0,
+                                            "ans_end_page": total_pages if "文件末尾" in ans_mode else 0
+                                        }]
+
+                                        st.session_state.toc_result = default_data
+                                        st.session_state.ans_mode_cache = ans_mode
+                                        st.rerun()                                                    except Exception as e: st.error(f"AI 解析失败: {e}")
 
                                 else:
                                     # === 路径 B: 无目录模式 (直接构造默认数据) ===
