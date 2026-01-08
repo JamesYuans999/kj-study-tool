@@ -13,6 +13,9 @@ from openai import OpenAI
 import streamlit.components.v1 as components
 import os
 import openpyxl
+import edge_tts
+import asyncio
+import tempfile
 
 # ==============================================================================
 # 1. 全局配置与“奶油绿便当盒”风格还原 (CSS)
@@ -177,6 +180,19 @@ check_and_update_streak(user_id)
 # ==============================================================================
 # 3. 核心功能函数 (AI / DB / File)
 # ==============================================================================
+
+async def generate_audio_file(text, voice="zh-CN-XiaoxiaoNeural"):
+    """
+    使用 Edge-TTS 生成语音文件
+    Voice 可选:
+    - zh-CN-XiaoxiaoNeural (女声，温暖)
+    - zh-CN-YunxiNeural (男声，稳重)
+    """
+    communicate = edge_tts.Communicate(text, voice)
+    # 创建一个临时文件来存放 MP3
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_file:
+        await communicate.save(tmp_file.name)
+        return tmp_file.name
 
 # --- 数据库 Helper 函数 ---
 def get_user_profile(uid):
@@ -1091,6 +1107,7 @@ elif menu == "📂 智能拆书 & 资料":
 
                                         # === 循环结束，进度条拉满 ===
                                         progress_bar.progress(100)
+                                        st.balloons()
                                         st.success(f"🎉 入库完成！书籍《{up_file.name}》已保存。")
 
                                         # === 🔥 新增：继续上传交互 ===
@@ -1290,17 +1307,201 @@ elif menu == "📂 智能拆书 & 资料":
                         with c_op2:
                             st.caption(f"页码范围: P{chap['start_page']} - P{chap['end_page']}")
 
+
+# =========================================================
+# 🎓 AI 课堂 (讲义) - V8.5 数据库持久化 + 金牌讲师版
+# =========================================================
+elif menu == "🎓 AI 课堂 (讲义)":
+    st.title("🎓 AI 深度课堂")
+    st.caption("私人定制的会计私教，用人话把知识点讲透。")
+
+    # --- 1. 选书选章 (通用逻辑) ---
+    subjects = get_subjects()
+    if not subjects: st.warning("请先去【资料库】初始化数据"); st.stop()
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        s_name = st.selectbox("科目", [s['name'] for s in subjects])
+        sid = next(s['id'] for s in subjects if s['name'] == s_name)
+    with c2:
+        books = get_books(sid)
+        bid = None
+        if books:
+            b_map = {b['title']: b['id'] for b in books}
+            b_name = st.selectbox("书籍", list(b_map.keys()))
+            bid = b_map[b_name]
+    with c3:
+        cid = None
+        if bid:
+            chaps = get_chapters(bid)
+            if chaps:
+                c_map = {c['title']: c['id'] for c in chaps}
+                c_name = st.selectbox("章节", list(c_map.keys()))
+                cid = c_map[c_name]
+
+    if not cid:
+        st.info("👈 请先在上方选择一个章节")
+        st.stop()
+
+    st.divider()
+
+    # --- 2. 功能分区的 Tabs ---
+    tab_view, tab_gen = st.tabs(["📚 我的讲义本 (历史记录)", "✨ 生成新讲义"])
+
+    # ==========================================
+    # Tab 1: 查看与管理已保存的讲义
+    # ==========================================
+    with tab_view:
+        try:
+            lessons = supabase.table("ai_lessons").select("*").eq("chapter_id", cid).eq("user_id", user_id).order(
+                "created_at", desc=True).execute().data
+        except:
+            lessons = []
+
+        if not lessons:
+            st.info("📭 本章节暂无讲义，请去“生成新讲义”标签页创建一个吧！")
+        else:
+            for les in lessons:
+                with st.expander(f"📝 {les['title']} ({les['created_at'][:10]})", expanded=False):
+
+                    # --- 工具栏 ---
+                    c_tts, c_del = st.columns([2, 1])
+
+                    # 🎧 1. 语音播放功能
+                    with c_tts:
+                        # 使用 session_state 防止每次刷新都重新生成音频
+                        audio_key = f"audio_{les['id']}"
+
+                        if st.button("🎧 生成语音讲解 (Edge-TTS)", key=f"btn_tts_{les['id']}"):
+                            with st.spinner("🎙️ 正在合成金牌讲师语音 (约需5秒)..."):
+                                try:
+                                    # 提取纯文本用于朗读（去掉 Markdown 符号影响发音）
+                                    # 简单处理：只保留中文和数字，或者直接读原文也可以，Edge-TTS 对 Markdown 兼容性尚可
+                                    clean_text = les['content'][:4000]  # 限制长度防止超时
+
+                                    # 运行异步函数
+                                    mp3_path = asyncio.run(generate_audio_file(clean_text, "zh-CN-XiaoxiaoNeural"))
+
+                                    # 读取二进制数据存入 Session
+                                    with open(mp3_path, "rb") as f:
+                                        st.session_state[audio_key] = f.read()
+
+                                except Exception as e:
+                                    st.error(f"语音生成失败: {e}")
+
+                        # 如果 Session 里有音频，就显示播放器
+                        if audio_key in st.session_state:
+                            st.audio(st.session_state[audio_key], format="audio/mp3")
+                            # st.audio 自带下载按钮 (三个点菜单 -> 下载)
+
+                    # 🗑️ 2. 删除功能
+                    with c_del:
+                        if st.button("🗑️ 删除讲义", key=f"del_les_{les['id']}"):
+                            supabase.table("ai_lessons").delete().eq("id", les['id']).execute()
+                            # 清理音频缓存
+                            if audio_key in st.session_state: del st.session_state[audio_key]
+                            st.toast("已删除")
+                            time.sleep(1)
+                            st.rerun()
+
+                    st.divider()
+
+                    # 内容展示
+                    st.markdown(les['content'])
+
+                    # 重新生成引导
+                    if st.button("🔄 对此不满意？基于此主题重新生成", key=f"regen_les_{les['id']}"):
+                        st.session_state['regen_title'] = les['title']
+                        st.session_state['regen_trigger'] = True
+                        st.toast("已跳转，请点击生成按钮")
+
+    # ==========================================
+    # Tab 2: 生成新讲义 (金牌讲师逻辑)
+    # ==========================================
+    with tab_gen:
+        # 读取教材原文
+        mats = supabase.table("materials").select("content").eq("chapter_id", cid).execute().data
+        if not mats:
+            st.warning("⚠️ 该章节尚未上传教材内容，AI 无法生成。")
+        else:
+            full_text = "\n".join([m['content'] for m in mats])
+
+            # 默认标题处理
+            default_title = st.session_state.get('regen_title', f"深度解析：{c_name}")
+
+            input_title = st.text_input("给讲义起个标题", value=default_title)
+
+            # 风格选择 (决定 Prompt 的走向)
+            style_map = {
+                "👶 小白通俗版": "用极其通俗、幽默的语言，大量使用生活案例（如买菜、开店、谈恋爱）类比。",
+                "🦁 考霸冲刺版": "极其精炼，只讲考点和坑点，列出“必背口诀”，适合考前复习。",
+                "⚖️ 法条深度版": "逻辑严密，引用准则原文，分析底层逻辑，适合攻克难点。"
+            }
+            sel_style = st.radio("选择授课风格", list(style_map.keys()), horizontal=True)
+
+            # 🚀 核心 Prompt 设计
+            if st.button("🚀 AI 老师开讲 (自动保存)", type="primary"):
+                system_instruction = style_map[sel_style]
+
+                # === 🌟 金牌讲师 Prompt ===
+                prompt = f"""
+                【角色设定】
+                你不是一个只会念书的 AI，你是**中级会计职称考试的金牌讲师**（类似张志凤或郭守杰的风格）。
+                你的目标是让一个没有任何基础的学生，听完能懂，懂了能做题。
+
+                【授课要求】
+                1. **风格指令**：{system_instruction}
+                2. **结构要求**：
+                   - 🎯 **本节核心**：一句话概括这节课要学什么。
+                   - 🍎 **生活案例导入**：必须用一个生活中的例子（如奶茶店进货、买房贷款、结婚彩礼等）来引入会计概念。
+                   - 📖 **知识点拆解**：结合教材内容进行讲解。
+                   - ⚠️ **避坑指南**：指出考试常设的陷阱。
+                   - 🧠 **记忆口诀**：编一个顺口溜或口诀。
+                3. **排版要求**：使用 Markdown，多用 Emoji，关键重点加粗。
+
+                【教材原始内容】
+                {full_text[:15000]}
+                """
+
+                with st.spinner("👩‍🏫 AI 老师正在板书..."):
+                    # 调用 AI
+                    generated_content = call_ai_universal(prompt, timeout_override=120)
+
+                    if generated_content and "Error" not in generated_content:
+                        # === 💾 自动存入数据库 ===
+                        try:
+                            supabase.table("ai_lessons").insert({
+                                "user_id": user_id,
+                                "chapter_id": cid,
+                                "title": input_title,
+                                "content": generated_content,
+                                "ai_model": st.session_state.get('selected_provider', 'Unknown')
+                            }).execute()
+
+                            st.balloons()
+                            st.success("🎉 讲义生成并保存成功！请切换到“📚 我的讲义本”查看。")
+
+                            # 清除重生成状态
+                            if 'regen_title' in st.session_state: del st.session_state['regen_title']
+
+                            time.sleep(2)
+                            st.rerun()  # 刷新页面以显示在列表中
+                        except Exception as e:
+                            st.error(f"保存失败: {e}")
+                            st.write(generated_content)  # 至少展示出来防丢失
+
+
 # =========================================================
 # 📝 章节特训 (V6.3: 完整逻辑修复版 - 含数据库查询与主观题支持)
 # =========================================================
 elif menu == "📝 章节特训":
     st.title("📝 章节突破")
-    
+
     # --- 1. JS 实时悬浮计时器 ---
     if st.session_state.get('quiz_active'):
         if 'js_start_time' not in st.session_state:
             st.session_state.js_start_time = int(time.time() * 1000)
-        
+
         components.html(f"""
         <div style='position:fixed;top:60px;right:20px;z-index:9999;background:linear-gradient(45deg, #00C090, #00E6AC);color:white;padding:8px 20px;border-radius:30px;font-family:monospace;font-size:18px;font-weight:bold;box-shadow:0 4px 15px rgba(0,192,144,0.3)'>
             ⏱️ <span id='t'>00:00</span>
@@ -1321,10 +1522,10 @@ elif menu == "📝 章节特训":
         if subjects:
             # 级联选择器
             c1, c2, c3 = st.columns(3)
-            with c1: 
+            with c1:
                 s_name = st.selectbox("1. 选择科目", [s['name'] for s in subjects])
                 sid = next(s['id'] for s in subjects if s['name'] == s_name)
-            
+
             with c2:
                 books = get_books(sid)
                 if not books:
@@ -1334,7 +1535,7 @@ elif menu == "📝 章节特训":
                     b_map = {f"{b['title']} (ID:{b['id']})": b['id'] for b in books}
                     sel_b_label = st.selectbox("2. 选择书籍", list(b_map.keys()))
                     bid = b_map[sel_b_label]
-            
+
             with c3:
                 cid = None
                 if bid:
@@ -1349,7 +1550,7 @@ elif menu == "📝 章节特训":
             # 选中章节后的逻辑
             if cid:
                 st.markdown("---")
-                
+
                 # === 📊 智能进度看板 ===
                 try:
                     q_res = supabase.table("question_bank").select("id").eq("chapter_id", cid).execute().data
@@ -1864,10 +2065,7 @@ elif menu == "📊 弱项分析":
         else: st.info("暂无数据")
     except: st.error("数据加载失败")
 
-# === ❌ 错题本 ===
-# =========================================================
-# ❌ 错题本 (V8.0: 修复主观题显示 + AI 深度私教模式)
-# =========================================================
+
 # =========================================================
 # ❌ 错题本 (V8.1: 含删除/重生成功能的完整版)
 # =========================================================
