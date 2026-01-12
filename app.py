@@ -712,7 +712,7 @@ if menu == "🏠 仪表盘":
         """, unsafe_allow_html=True)
 
 # =========================================================
-# 📂 智能拆书 & 资料 (V8.6: 修复教材模式死锁与Prompt适配) 
+# 📂 智能拆书 & 资料 (V8.6: 修复教材模式死锁与Prompt适配)
 # =========================================================
 elif menu == "📂 智能拆书 & 资料":
     st.title("📂 资料库管理 (Pro)")
@@ -1325,11 +1325,14 @@ elif menu == "📂 智能拆书 & 资料":
 # =========================================================
 # 🎓 AI 课堂 (讲义) - V8.5 数据库持久化 + 金牌讲师版
 # =========================================================
+# =========================================================
+# 🎓 AI 课堂 (讲义) - V9.0: 分步生成 + 可修标题 + 讲义问答
+# =========================================================
 elif menu == "🎓 AI 课堂 (讲义)":
     st.title("🎓 AI 深度课堂")
-    st.caption("私人定制的会计私教，用人话把知识点讲透。")
+    st.caption("分步生成长篇讲义，支持断点续写和深度问答。")
 
-    # --- 1. 选书选章 (通用逻辑) ---
+    # --- 1. 选书选章 (保持不变) ---
     subjects = get_subjects()
     if not subjects: st.warning("请先去【资料库】初始化数据"); st.stop()
 
@@ -1359,11 +1362,11 @@ elif menu == "🎓 AI 课堂 (讲义)":
 
     st.divider()
 
-    # --- 2. 功能分区的 Tabs ---
-    tab_view, tab_gen = st.tabs(["📚 我的讲义本 (历史记录)", "✨ 生成新讲义"])
+    # --- 2. 功能分区 ---
+    tab_view, tab_gen = st.tabs(["📚 我的讲义本 (历史)", "✨ 分步生成工作台"])
 
     # ==========================================
-    # Tab 1: 查看与管理已保存的讲义
+    # Tab 1: 查看、修改、问答
     # ==========================================
     with tab_view:
         try:
@@ -1373,137 +1376,207 @@ elif menu == "🎓 AI 课堂 (讲义)":
             lessons = []
 
         if not lessons:
-            st.info("📭 本章节暂无讲义，请去“生成新讲义”标签页创建一个吧！")
+            st.info("📭 本章节暂无讲义，请去“生成工作台”创建一个吧！")
         else:
             for les in lessons:
-                with st.expander(f"📝 {les['title']} ({les['created_at'][:10]})", expanded=False):
+                # 动态标题展示
+                les_id = les['id']
+                with st.expander(f"📝 {les['title']}", expanded=False):
 
-                    # --- 工具栏 ---
-                    c_tts, c_del = st.columns([2, 1])
+                    # --- A. 标题修改区 ---
+                    c_edit_title, c_save_title = st.columns([4, 1])
+                    with c_edit_title:
+                        new_title = st.text_input("标题", value=les['title'], key=f"title_in_{les_id}",
+                                                  label_visibility="collapsed")
+                    with c_save_title:
+                        if new_title != les['title']:
+                            if st.button("💾 保存标题", key=f"save_t_{les_id}"):
+                                supabase.table("ai_lessons").update({"title": new_title}).eq("id", les_id).execute()
+                                st.toast("标题已更新")
+                                time.sleep(1);
+                                st.rerun()
 
-                    # 🎧 1. 语音播放功能
+                    st.markdown("---")
+
+                    # --- B. 工具栏 (TTS/删除) ---
+                    c_tts, c_del = st.columns([1, 1])
                     with c_tts:
-                        # 使用 session_state 防止每次刷新都重新生成音频
-                        audio_key = f"audio_{les['id']}"
-
-                        if st.button("🎧 生成语音讲解 (Edge-TTS)", key=f"btn_tts_{les['id']}"):
-                            with st.spinner("🎙️ 正在合成金牌讲师语音 (约需5秒)..."):
+                        audio_key = f"audio_{les_id}"
+                        if st.button("🎧 生成语音 (Edge-TTS)", key=f"btn_tts_{les_id}"):
+                            with st.spinner("🎙️ 合成中..."):
                                 try:
-                                    # 提取纯文本用于朗读（去掉 Markdown 符号影响发音）
-                                    # 简单处理：只保留中文和数字，或者直接读原文也可以，Edge-TTS 对 Markdown 兼容性尚可
-                                    clean_text = les['content'][:4000]  # 限制长度防止超时
-
-                                    # 运行异步函数
-                                    mp3_path = asyncio.run(generate_audio_file(clean_text, "zh-CN-XiaoxiaoNeural"))
-
-                                    # 读取二进制数据存入 Session
+                                    clean_text = les['content'][:4000]
+                                    mp3_path = asyncio.run(generate_audio_file(clean_text))
                                     with open(mp3_path, "rb") as f:
                                         st.session_state[audio_key] = f.read()
-
                                 except Exception as e:
-                                    st.error(f"语音生成失败: {e}")
-
-                        # 如果 Session 里有音频，就显示播放器
+                                    st.error(f"语音失败: {e}")
                         if audio_key in st.session_state:
                             st.audio(st.session_state[audio_key], format="audio/mp3")
-                            # st.audio 自带下载按钮 (三个点菜单 -> 下载)
 
-                    # 🗑️ 2. 删除功能
                     with c_del:
-                        if st.button("🗑️ 删除讲义", key=f"del_les_{les['id']}"):
-                            supabase.table("ai_lessons").delete().eq("id", les['id']).execute()
-                            # 清理音频缓存
-                            if audio_key in st.session_state: del st.session_state[audio_key]
+                        if st.button("🗑️ 删除讲义", key=f"del_les_{les_id}"):
+                            supabase.table("ai_lessons").delete().eq("id", les_id).execute()
                             st.toast("已删除")
-                            time.sleep(1)
+                            time.sleep(1);
                             st.rerun()
 
                     st.divider()
 
-                    # 内容展示
+                    # --- C. 内容展示 ---
                     st.markdown(les['content'])
 
-                    # 重新生成引导
-                    if st.button("🔄 对此不满意？基于此主题重新生成", key=f"regen_les_{les['id']}"):
-                        st.session_state['regen_title'] = les['title']
-                        st.session_state['regen_trigger'] = True
-                        st.toast("已跳转，请点击生成按钮")
+                    # --- D. 讲义专属问答区 (Q&A) ---
+                    st.markdown("### 🙋‍♂️ 针对本讲义提问")
+
+                    # 初始化/获取历史记录
+                    chat_history = les.get('chat_history') or []
+
+                    # 展示历史
+                    for msg in chat_history:
+                        role = "user" if msg['role'] == "user" else "ai"
+                        bg = "#f0f2f6" if role == "ai" else "#e7f2fa"
+                        with st.chat_message(role):
+                            st.markdown(msg['content'])
+
+                    # 提问输入框
+                    q_input = st.chat_input(f"哪里不懂？问问 AI (ID:{les_id})", key=f"chat_in_{les_id}")
+                    if q_input:
+                        # 1. 存用户提问
+                        chat_history.append({"role": "user", "content": q_input})
+
+                        # 2. 调用 AI 回答
+                        # 构建上下文：讲义内容 + 历史对话
+                        context_prompt = f"""
+                        【背景】你正在为学生解答一份会计讲义的疑问。
+                        【讲义内容】
+                        {les['content'][:10000]}
+                        ...
+
+                        【学生提问】{q_input}
+                        """
+                        # 使用 Universal 调用，传入历史
+                        ai_reply = call_ai_universal(context_prompt, history=chat_history[:-1])
+
+                        # 3. 存 AI 回答
+                        chat_history.append({"role": "model", "content": ai_reply})
+
+                        # 4. 更新数据库
+                        supabase.table("ai_lessons").update({"chat_history": chat_history}).eq("id", les_id).execute()
+                        st.rerun()
 
     # ==========================================
-    # Tab 2: 生成新讲义 (金牌讲师逻辑)
+    # Tab 2: 分步生成工作台 (Draft Mode)
     # ==========================================
     with tab_gen:
+        # 初始化草稿 Session
+        if 'draft_content' not in st.session_state:
+            st.session_state.draft_content = ""
+
         # 读取教材原文
         mats = supabase.table("materials").select("content").eq("chapter_id", cid).execute().data
         if not mats:
-            st.warning("⚠️ 该章节尚未上传教材内容，AI 无法生成。")
+            st.warning("⚠️ 请先上传教材资料。")
         else:
             full_text = "\n".join([m['content'] for m in mats])
 
-            # 默认标题处理
-            default_title = st.session_state.get('regen_title', f"深度解析：{c_name}")
+            # 1. 控制面板
+            c_style, c_act = st.columns([2, 1])
+            with c_style:
+                style = st.selectbox("授课风格", ["👶 小白通俗版 (多举例)", "🦁 考霸冲刺版 (重考点)", "⚖️ 法条深度版"])
+                input_title = st.text_input("讲义标题", value=f"深度解析：{c_name}")
 
-            input_title = st.text_input("给讲义起个标题", value=default_title)
+            with c_act:
+                st.write("")
+                st.write("")
+                # 清空草稿按钮
+                if st.button("🧹 清空草稿，重新开始"):
+                    st.session_state.draft_content = ""
+                    st.rerun()
 
-            # 风格选择 (决定 Prompt 的走向)
-            style_map = {
-                "👶 小白通俗版": "用极其通俗、幽默的语言，大量使用生活案例（如买菜、开店、谈恋爱）类比。",
-                "🦁 考霸冲刺版": "极其精炼，只讲考点和坑点，列出“必背口诀”，适合考前复习。",
-                "⚖️ 法条深度版": "逻辑严密，引用准则原文，分析底层逻辑，适合攻克难点。"
-            }
-            sel_style = st.radio("选择授课风格", list(style_map.keys()), horizontal=True)
+            st.divider()
 
-            # 🚀 核心 Prompt 设计
-            if st.button("🚀 AI 老师开讲 (自动保存)", type="primary"):
-                system_instruction = style_map[sel_style]
+            # 2. 草稿编辑区 (核心)
+            st.caption("👇 AI 生成的内容会出现在这里，你可以随时修改，然后让 AI 继续写。")
+            draft_area = st.text_area("草稿板 (Draft)", value=st.session_state.draft_content, height=400,
+                                      key="draft_editor")
 
-                # === 🌟 金牌讲师 Prompt ===
-                prompt = f"""
-                【角色设定】
-                你不是一个只会念书的 AI，你是**中级会计职称考试的金牌讲师**（类似张志凤或郭守杰的风格）。
-                你的目标是让一个没有任何基础的学生，听完能懂，懂了能做题。
+            # 这里的逻辑是：用户在 text_area 修改后，session_state.draft_editor 会更新
+            # 我们需要同步回 draft_content，以便 AI 读取最新内容
+            if draft_area != st.session_state.draft_content:
+                st.session_state.draft_content = draft_area
 
-                【授课要求】
-                1. **风格指令**：{system_instruction}
-                2. **结构要求**：
-                   - 🎯 **本节核心**：一句话概括这节课要学什么。
-                   - 🍎 **生活案例导入**：必须用一个生活中的例子（如奶茶店进货、买房贷款、结婚彩礼等）来引入会计概念。
-                   - 📖 **知识点拆解**：结合教材内容进行讲解。
-                   - ⚠️ **避坑指南**：指出考试常设的陷阱。
-                   - 🧠 **记忆口诀**：编一个顺口溜或口诀。
-                3. **排版要求**：使用 Markdown，多用 Emoji，关键重点加粗。
+            # 3. 操作按钮区
+            c_start, c_continue, c_save = st.columns(3)
 
-                【教材原始内容】
-                {full_text[:15000]}
-                """
+            # A. 开始生成 (第一段)
+            with c_start:
+                if st.button("🚀 生成第一部分 (大纲+开头)", type="primary",
+                             disabled=len(st.session_state.draft_content) > 50):
+                    prompt = f"""
+                    【角色】金牌会计讲师。
+                    【风格】{style}
+                    【任务】为《{c_name}》编写讲义。
+                    【要求】
+                    1. 先列出本章核心大纲。
+                    2. 开始讲解第一个知识点。
+                    3. 必须结合生活案例。
 
-                with st.spinner("👩‍🏫 AI 老师正在板书..."):
-                    # 调用 AI
-                    generated_content = call_ai_universal(prompt, timeout_override=120)
+                    【教材素材】
+                    {full_text[:8000]}
+                    """
+                    with st.spinner("正在构思大纲..."):
+                        res = call_ai_universal(prompt)
+                        if res:
+                            st.session_state.draft_content = res
+                            st.rerun()
 
-                    if generated_content and "Error" not in generated_content:
-                        # === 💾 自动存入数据库 ===
+            # B. 继续生成 (续写)
+            with c_continue:
+                if st.button("➕ 继续生成 (续写)", disabled=len(st.session_state.draft_content) < 10):
+                    # 获取草稿的最后 2000 字作为上下文，防止 Token 溢出
+                    context_tail = st.session_state.draft_content[-2000:]
+
+                    prompt = f"""
+                    【任务】继续编写讲义。
+                    【当前进度】上文讲到了：
+                    ...{context_tail}
+
+                    【指令】
+                    1. 请紧接着上文的逻辑，继续讲解下一个知识点。
+                    2. 保持 {style} 的风格。
+                    3. 不要重复上文已有的内容。
+                    4. 如果本章内容讲完了，请进行总结。
+
+                    【教材素材】
+                    {full_text[:10000]}
+                    """
+                    with st.spinner("正在续写中..."):
+                        res = call_ai_universal(prompt)
+                        if res:
+                            # 追加内容
+                            st.session_state.draft_content += "\n\n" + res
+                            st.rerun()
+
+            # C. 保存入库
+            with c_save:
+                if st.button("💾 保存到讲义本", type="primary"):
+                    if len(st.session_state.draft_content) < 10:
+                        st.error("内容太少，无法保存")
+                    else:
                         try:
                             supabase.table("ai_lessons").insert({
                                 "user_id": user_id,
                                 "chapter_id": cid,
                                 "title": input_title,
-                                "content": generated_content,
-                                "ai_model": st.session_state.get('selected_provider', 'Unknown')
+                                "content": st.session_state.draft_content,
+                                "ai_model": style
                             }).execute()
-
                             st.balloons()
-                            st.success("🎉 讲义生成并保存成功！请切换到“📚 我的讲义本”查看。")
-
-                            # 清除重生成状态
-                            if 'regen_title' in st.session_state: del st.session_state['regen_title']
-
-                            time.sleep(2)
-                            st.rerun()  # 刷新页面以显示在列表中
+                            st.success("已保存！请去“📚 我的讲义本”查看。")
+                            # 保存后不自动清空，防止用户想存两个版本
                         except Exception as e:
                             st.error(f"保存失败: {e}")
-                            st.write(generated_content)  # 至少展示出来防丢失
-
 
 # =========================================================
 # 📝 章节特训 (V6.3: 完整逻辑修复版 - 含数据库查询与主观题支持)
