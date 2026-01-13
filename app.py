@@ -1922,27 +1922,41 @@ elif menu == "🎓 AI 课堂 (讲义)":
 
                         with c_save:
                             if st.button("💾 保存讲义", use_container_width=True):
-                                if len(st.session_state.draft_content) < 50:
-                                    st.error("内容太少")
+                                # === 🛠️ 关键修复：直接从输入框控件(Key)获取最新内容 ===
+                                # 优先读取 draft_display (输入框里的字)，如果读不到再读 draft_content
+                                real_content = st.session_state.get("draft_display", st.session_state.draft_content)
+
+                                # 打印当前字数方便调试
+                                current_len = len(real_content)
+
+                                # 将门槛从 50 降低到 5，方便你测试
+                                if current_len < 5:
+                                    st.error(f"内容太少 (检测到 {current_len} 字)，无法保存。")
                                 else:
                                     try:
+                                        # 保存前，先把最新内容同步回 session_state，防止下次丢失
+                                        st.session_state.draft_content = real_content
+
+                                        # 检查是否已存在同名讲义，防止重复
                                         exist = supabase.table("ai_lessons").select("id").eq("title", input_title).eq(
                                             "chapter_id", cid).execute().data
+
                                         if exist:
                                             supabase.table("ai_lessons").update({
-                                                "content": st.session_state.draft_content,
+                                                "content": real_content,
                                                 "ai_model": style
                                             }).eq("id", exist[0]['id']).execute()
-                                            st.toast("✅ 已更新")
+                                            st.toast(f"✅ 已更新 (字数: {current_len})")
                                         else:
                                             supabase.table("ai_lessons").insert({
                                                 "user_id": user_id,
                                                 "chapter_id": cid,
                                                 "title": input_title,
-                                                "content": st.session_state.draft_content,
+                                                "content": real_content,
                                                 "ai_model": style
                                             }).execute()
-                                            st.toast("✅ 已保存")
+                                            st.balloons()
+                                            st.toast(f"✅ 已保存 (字数: {current_len})")
                                     except Exception as e:
                                         st.error(f"保存失败: {e}")
 
