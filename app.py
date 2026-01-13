@@ -145,6 +145,34 @@ if 'user_id' not in st.session_state:
     st.session_state.user_id = "test_user_001"
 user_id = st.session_state.user_id
 
+
+# --- 辅助函数：大纲覆盖检测 ---
+def check_outline_coverage(outline, draft_text):
+    if not outline: return []
+    coverage = []
+    draft_lower = draft_text.lower()
+    for point in outline:
+        pt_lower = point.lower()
+        # 多策略匹配
+        is_covered = (
+                pt_lower in draft_lower or
+                f"{point}：" in draft_text or
+                f"{point}:" in draft_text
+        )
+        coverage.append({"title": point, "covered": is_covered})
+    return coverage
+
+
+# --- 辅助函数：完结检测 ---
+def check_if_finished(curr_pos, total_len, outline_coverage):
+    # 条件1：物理进度走完
+    if curr_pos >= total_len: return True
+    # 条件2：大纲覆盖率 > 90%
+    if outline_coverage:
+        covered_count = sum(1 for item in outline_coverage if item['covered'])
+        if covered_count >= len(outline_coverage) * 0.9: return True
+    return False
+
 def check_and_update_streak(uid):
     """检查并更新连续打卡天数"""
     try:
@@ -924,33 +952,6 @@ elif menu == "📂 智能拆书 & 资料":
 
 
     # --- 0. 辅助函数定义 (置顶防止 NameError) ---
-
-    # --- 辅助函数：大纲覆盖检测 ---
-    def check_outline_coverage(outline, draft_text):
-        if not outline: return []
-        coverage = []
-        draft_lower = draft_text.lower()
-        for point in outline:
-            pt_lower = point.lower()
-            # 多策略匹配
-            is_covered = (
-                    pt_lower in draft_lower or
-                    f"{point}：" in draft_text or
-                    f"{point}:" in draft_text
-            )
-            coverage.append({"title": point, "covered": is_covered})
-        return coverage
-
-
-    # --- 辅助函数：完结检测 ---
-    def check_if_finished(curr_pos, total_len, outline_coverage):
-        # 条件1：物理进度走完
-        if curr_pos >= total_len: return True
-        # 条件2：大纲覆盖率 > 90%
-        if outline_coverage:
-            covered_count = sum(1 for item in outline_coverage if item['covered'])
-            if covered_count >= len(outline_coverage) * 0.9: return True
-        return False
 
     def clean_textbook_content(text):
         """简单的文本清洗：去除页眉页脚、短行"""
