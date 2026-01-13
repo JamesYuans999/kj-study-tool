@@ -103,8 +103,38 @@ st.markdown("""
     .warn-box { padding: 15px; background: #FFF8E1; border-radius: 10px; color: #F57F17; border: 1px solid #FFE082; margin-bottom: 10px;}
 
     /* 隐藏 Streamlit 默认 Header */
-    header {visibility: hidden;}
+/* === 成功/警告框 === */
+    .success-box { padding: 15px; background: #E8F5E9; border-radius: 10px; color: #2E7D32; border: 1px solid #C8E6C9; margin-bottom: 10px;}
+    .warn-box { padding: 15px; background: #FFF8E1; border-radius: 10px; color: #F57F17; border: 1px solid #FFE082; margin-bottom: 10px;}
+
+    /* ❌ 删除原来的 header {visibility: hidden;} */
+    
+    /* ✅ 改用更精准的隐藏方式：只隐藏彩虹条和汉堡菜单的背景，保留按钮本身 */
+    
+    /* 隐藏顶部的红橙色装饰条 */
+    [data-testid="stDecoration"] {
+        display: none;
+    }
+    
+    /* 让顶部 Header 区域背景透明，不遮挡内容，但保留点击事件 */
+    [data-testid="stHeader"] {
+        background-color: transparent;
+        z-index: 1; /* 确保按钮在最上层 */
+    }
+
+    /* 针对手机端的优化：确保侧边栏切换按钮可见 */
+    [data-testid="collapsedControl"] {
+        display: block !important;
+        color: #00C090 !important; /* 把箭头改成你的主题绿 */
+        z-index: 9999;
+    }
+    
+    /* 隐藏右上角的 Deploy/管理 按钮（如果你不想让别人看到） */
+    [data-testid="stToolbar"] {
+        visibility: hidden;
+    }
 </style>
+
 """, unsafe_allow_html=True)
 
 # ==============================================================================
@@ -1557,7 +1587,7 @@ elif menu == "📂 智能拆书 & 资料":
                         with c_op2: st.caption(f"P{chap['start_page']} - P{chap['end_page']}")
 
 # =========================================================
-# 🎓 AI 课堂 (讲义) - 最终修复版 (含大纲缓存+防空白+多维进度)
+# 🎓 AI 课堂 (讲义) - 无幽灵修复版
 # =========================================================
 elif menu == "🎓 AI 课堂 (讲义)":
     st.title("🎓 AI 深度课堂")
@@ -1597,7 +1627,7 @@ elif menu == "🎓 AI 课堂 (讲义)":
     tab_view, tab_gen = st.tabs(["📚 我的讲义本 (历史)", "✨ 分步生成工作台"])
 
     # ==========================================
-    # Tab 1: 查看、修改、问答 (保持不变)
+    # Tab 1: 查看、修改、问答
     # ==========================================
     with tab_view:
         try:
@@ -1636,7 +1666,6 @@ elif menu == "🎓 AI 课堂 (讲义)":
                                 mp3_path = None
                                 try:
                                     clean_text = les['content'][:4000]
-                                    # ✅ 修复点：直接调用同步封装函数，不加 asyncio.run
                                     mp3_path = generate_audio_file(clean_text)
                                     with open(mp3_path, "rb") as f:
                                         st.session_state[audio_key] = f.read()
@@ -1679,7 +1708,7 @@ elif menu == "🎓 AI 课堂 (讲义)":
                         st.rerun()
 
     # ==========================================
-    # Tab 2: 分步生成工作台 (DeepSeek 终极修复版)
+    # Tab 2: 分步生成工作台 (纯净修复版)
     # ==========================================
     with tab_gen:
         # --- 1. 读取教材 ---
@@ -1720,8 +1749,8 @@ elif menu == "🎓 AI 课堂 (讲义)":
             # --- 2. 智能大纲逻辑 ---
             if not st.session_state.chapter_outline and total_len > 0:
                 with st.expander("✨ 智能大纲 (点击生成，已支持缓存省流)", expanded=True):
-                    # 尝试自动加载缓存
                     try:
+                        # 尝试静默加载缓存
                         cached_res = get_cached_outline(cid, full_text)
                         if cached_res and isinstance(cached_res, list):
                             st.session_state.chapter_outline = cached_res
