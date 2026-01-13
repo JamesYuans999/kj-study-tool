@@ -1783,150 +1783,127 @@ elif menu == "🎓 AI 课堂 (讲义)":
                     st.info("暂无大纲")
 
             # 右侧：生成主区域
-                    # 右侧：生成主区域
-                    with col_main:
-                        # 样式配置
-                        c_style, c_title = st.columns([1, 2])
-                        with c_style:
-                            style = st.selectbox("授课风格", ["👶 小白通俗版", "🦁 考霸冲刺版", "⚖️ 法条深度版"],
-                                                 label_visibility="collapsed")
-                        with c_title:
-                            input_title = st.text_input("标题", value=f"深度解析：{c_name}",
-                                                        label_visibility="collapsed")
+            with col_main:
+                # 样式配置
+                c_style, c_title = st.columns([1, 2])
+                with c_style:
+                    style = st.selectbox("授课风格", ["👶 小白通俗版", "🦁 考霸冲刺版", "⚖️ 法条深度版"],
+                                         label_visibility="collapsed")
+                with c_title:
+                    input_title = st.text_input("标题", value=f"深度解析：{c_name}", label_visibility="collapsed")
 
-                        st.caption("👇 生成内容区 (可手动修改)：")
+                st.caption("👇 生成内容区 (可手动修改)：")
 
-                        # =========================================================
-                        # 🔥 修复点 1：移除 on_change，防止空状态覆盖 AI 内容
-                        # =========================================================
 
-                        # 确保 draft_content 已初始化
-                        if "draft_content" not in st.session_state:
-                            st.session_state.draft_content = ""
+                # 定义同步函数
+                def sync_draft_content():
+                    st.session_state.draft_content = st.session_state.real_draft_editor
 
-                        # 定义唯一的 Key
-                        editor_key = "real_draft_editor"
 
-                        # 渲染输入框
-                        # 注意：这里去掉了 on_change=sync... 那个函数，改用直接读取
-                        user_text = st.text_area(
-                            "Draft",
-                            value=st.session_state.draft_content,
-                            height=500,
-                            key=editor_key,
-                            label_visibility="collapsed"
-                        )
+                # 渲染输入框 (使用 real_draft_editor Key)
+                st.text_area(
+                    "Draft",
+                    value=st.session_state.draft_content,
+                    height=500,
+                    key="real_draft_editor",
+                    label_visibility="collapsed",
+                    on_change=sync_draft_content
+                )
 
-                        # 核心生成逻辑
-                        start_idx = st.session_state.char_cursor
-                        end_idx = min(start_idx + CHUNK_SIZE, total_len)
+                # 核心生成逻辑
+                start_idx = st.session_state.char_cursor
+                end_idx = min(start_idx + CHUNK_SIZE, total_len)
 
-                        current_chunk_text = full_text[start_idx: end_idx]
-                        context_text = st.session_state.draft_content[-800:] if len(
-                            st.session_state.draft_content) > 0 else ""
+                current_chunk_text = full_text[start_idx: end_idx]
+                context_text = st.session_state.draft_content[-800:] if len(st.session_state.draft_content) > 0 else ""
 
-                        # 完结检测
-                        is_finished = check_if_finished(curr_pos, total_len, outline_status)
+                # 完结检测
+                is_finished = check_if_finished(curr_pos, total_len, outline_status)
 
-                        c_gen, c_save = st.columns([2, 1])
+                c_gen, c_save = st.columns([2, 1])
 
-                        with c_gen:
-                            if is_finished:
-                                st.success("🎉 本章内容已全部讲完！")
-                                # (总结功能的代码保持不变，省略...)
-                                if st.button("🎓 生成全篇总结", type="primary", use_container_width=True):
-                                    # ... 原有的总结逻辑 ...
-                                    pass
-                            else:
-                                # 动态按钮文本
-                                if start_idx == 0:
-                                    btn_text = "🚀 开始生成 (第 1 部分)"
-                                    prompt_intro = f"开始讲解《{c_name}》。先列出本章大纲，然后开始讲解。"
+                with c_gen:
+                    if is_finished:
+                        st.success("🎉 本章内容已全部讲完！")
+                        if st.button("🎓 生成全篇总结", type="primary", use_container_width=True):
+                            prompt = f"【任务】为这份讲义写总结。\n【风格】{style}\n【末尾内容】...{st.session_state.draft_content[-1500:]}"
+                            with st.spinner("正在总结..."):
+                                res = call_ai_universal(prompt)
+                                if res:
+                                    st.session_state.draft_content += "\n\n## 🏁 课程总结\n" + res
+                                    # 删除 Key 强制刷新
+                                    if "real_draft_editor" in st.session_state:
+                                        del st.session_state["real_draft_editor"]
+                                    st.rerun()
+                    else:
+                        # 动态按钮
+                        if start_idx == 0:
+                            btn_text = "🚀 开始生成 (第 1 部分)"
+                            prompt_intro = f"开始讲解《{c_name}》。先列出本章大纲，然后开始讲解。"
+                        else:
+                            pct = int(start_idx / total_len * 100)
+                            btn_text = f"➕ 继续生成 ({pct}% -> {int(end_idx / total_len * 100)}%)"
+                            prompt_intro = f"紧接上文，继续讲解《{c_name}》的后续内容。"
+
+                        if st.button(btn_text, type="primary", use_container_width=True):
+                            with st.spinner(f"AI 正在研读教材..."):
+                                prompt = f"""
+                                【角色】金牌会计讲师。
+                                【风格】{style}
+                                【任务】{prompt_intro}
+                                【上文回顾】...{context_text}
+                                【当前教材片段】{current_chunk_text}
+                                【要求】详细讲解当前片段，遇案例通俗拆解。Markdown格式。
+                                """
+                                res = call_ai_universal(prompt)
+
+                                if res and "Error" not in res:
+                                    sep = "\n\n---\n\n" if start_idx > 0 else ""
+                                    new_content = st.session_state.draft_content + sep + res
+
+                                    # 1. 更新数据
+                                    st.session_state.draft_content = new_content
+
+                                    # 2. 修复报错：使用删除 Key 的方式强制刷新
+                                    if "real_draft_editor" in st.session_state:
+                                        del st.session_state["real_draft_editor"]
+
+                                    # 3. 推进游标
+                                    min_advance = CHUNK_SIZE // 2
+                                    next_pos = max(end_idx - OVERLAP, start_idx + min_advance, curr_pos + 1)
+                                    st.session_state.char_cursor = min(next_pos, total_len)
+
+                                    st.rerun()
                                 else:
-                                    pct = int(start_idx / total_len * 100)
-                                    btn_text = f"➕ 继续生成 ({pct}% -> {int(end_idx / total_len * 100)}%)"
-                                    prompt_intro = f"紧接上文，继续讲解《{c_name}》的后续内容。"
+                                    st.error(f"生成失败: {res}")
 
-                                if st.button(btn_text, type="primary", use_container_width=True):
-                                    with st.spinner(f"AI 正在研读教材..."):
-                                        prompt = f"""
-                                            【角色】金牌会计讲师。
-                                            【风格】{style}
-                                            【任务】{prompt_intro}
-                                            【上文回顾】...{context_text}
-                                            【当前教材片段】{current_chunk_text}
-                                            【要求】详细讲解当前片段，遇案例通俗拆解。Markdown格式。
-                                            """
-                                        res = call_ai_universal(prompt)
+                with c_save:
+                    if st.button("💾 保存讲义", use_container_width=True):
+                        # 优先从控件读取最新值
+                        real_content = st.session_state.get("real_draft_editor", st.session_state.draft_content)
+                        current_len = len(real_content)
 
-                                        if res and "Error" not in res:
-                                            sep = "\n\n---\n\n" if start_idx > 0 else ""
-                                            new_content = st.session_state.draft_content + sep + res
-
-                                            # =========================================================
-                                            # 🔥 修复点 2：强制刷新控件状态
-                                            # =========================================================
-
-                                            # 1. 更新后台数据
-                                            st.session_state.draft_content = new_content
-
-                                            # 2. 暴力删除控件的 Key。
-                                            # 只有删了这个 Key，Streamlit 下次渲染 text_area 时，
-                                            # 才会被迫放弃“记忆中的空内容”，转而使用 value=st.session_state.draft_content
-                                            if editor_key in st.session_state:
-                                                del st.session_state[editor_key]
-
-                                            # 3. 推进游标
-                                            min_advance = CHUNK_SIZE // 2
-                                            next_pos = max(end_idx - OVERLAP, start_idx + min_advance, curr_pos + 1)
-                                            st.session_state.char_cursor = min(next_pos, total_len)
-
-                                            st.rerun()
-                                        else:
-                                            st.error(f"生成失败: {res}")
-
-                        with c_save:
-                            if st.button("💾 保存讲义", use_container_width=True):
-                                # =========================================================
-                                # 🔥 修复点 3：智能读取内容 (防止存空)
-                                # =========================================================
-
-                                # A. 尝试获取编辑器里的内容 (用户刚刚可能手动修改过)
-                                content_from_widget = st.session_state.get(editor_key, "")
-
-                                # B. 尝试获取后台生成的原始内容
-                                content_from_state = st.session_state.draft_content
-
-                                # C. 决策：谁长信谁 (通常生成的内容都很长，如果是空的说明出错了)
-                                final_content = content_from_widget if len(content_from_widget) > len(
-                                    content_from_state) else content_from_state
-
-                                if len(final_content) < 5:
-                                    st.error(f"⚠️ 内容似乎为空 (长度: {len(final_content)})。请先点击生成按钮。")
+                        if current_len < 5:
+                            st.error(f"内容太少 (检测到 {current_len} 字)")
+                        else:
+                            try:
+                                st.session_state.draft_content = real_content
+                                exist = supabase.table("ai_lessons").select("id").eq("title", input_title).eq(
+                                    "chapter_id", cid).execute().data
+                                if exist:
+                                    supabase.table("ai_lessons").update({
+                                        "content": real_content, "ai_model": style
+                                    }).eq("id", exist[0]['id']).execute()
+                                    st.toast("✅ 已更新")
                                 else:
-                                    try:
-                                        # 同步状态
-                                        st.session_state.draft_content = final_content
-
-                                        # 执行数据库保存
-                                        exist = supabase.table("ai_lessons").select("id").eq("title", input_title).eq(
-                                            "chapter_id", cid).execute().data
-                                        if exist:
-                                            supabase.table("ai_lessons").update({
-                                                "content": final_content, "ai_model": style
-                                            }).eq("id", exist[0]['id']).execute()
-                                            st.toast("✅ 已更新")
-                                        else:
-                                            supabase.table("ai_lessons").insert({
-                                                "user_id": user_id, "chapter_id": cid,
-                                                "title": input_title, "content": final_content, "ai_model": style
-                                            }).execute()
-                                            st.balloons()
-                                            st.success("✅ 已保存到云端")
-                                            time.sleep(1)
-                                            st.rerun()
-                                    except Exception as e:
-                                        st.error(f"保存失败: {e}")
+                                    supabase.table("ai_lessons").insert({
+                                        "user_id": user_id, "chapter_id": cid,
+                                        "title": input_title, "content": real_content, "ai_model": style
+                                    }).execute()
+                                    st.balloons()
+                                    st.toast("✅ 已保存")
+                            except Exception as e:
+                                st.error(f"保存失败: {e}")
 
 # =========================================================
 # 📝 章节特训 (V6.3: 完整逻辑修复版 - 含数据库查询与主观题支持)
