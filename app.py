@@ -12,10 +12,12 @@ import plotly.express as px
 from openai import OpenAI
 import streamlit.components.v1 as components
 import os
-import openpyxl
 import edge_tts
 import asyncio
 import tempfile
+import uuid
+import re
+import gc
 
 # ==============================================================================
 # 1. 全局配置与“奶油绿便当盒”风格还原 (CSS)
@@ -181,18 +183,31 @@ check_and_update_streak(user_id)
 # 3. 核心功能函数 (AI / DB / File)
 # ==============================================================================
 
-async def generate_audio_file(text, voice="zh-CN-XiaoxiaoNeural"):
-    """
-    使用 Edge-TTS 生成语音文件
-    Voice 可选:
-    - zh-CN-XiaoxiaoNeural (女声，温暖)
-    - zh-CN-YunxiNeural (男声，稳重)
-    """
+async def _generate_audio_coroutine(text, voice, filepath):
+    """内部协程，负责实际生成"""
     communicate = edge_tts.Communicate(text, voice)
-    # 创建一个临时文件来存放 MP3
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_file:
-        await communicate.save(tmp_file.name)
-        return tmp_file.name
+    await communicate.save(filepath)
+
+def generate_audio_file(text, voice="zh-CN-XiaoxiaoNeural"):
+    """
+    [Bug修复] 同步包装器。
+    Streamlit 运行时可能已有 Event Loop 或处于特殊线程。
+    直接 asyncio.run() 会导致 'There is no current event loop' 错误。
+    """
+    temp_dir = tempfile.gettempdir()
+    filename = f"tts_{uuid.uuid4()}.mp3"
+    filepath = os.path.join(temp_dir, filename)
+
+    try:
+        # 方案：创建新的事件循环并在其中运行，用完即毁，确保线程安全
+        new_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(new_loop)
+        new_loop.run_until_complete(_generate_audio_coroutine(text, voice, filepath))
+        new_loop.close()
+        return filepath
+    except Exception as e:
+        st.error(f"语音合成失败: {e}")
+        return None
 
 # --- 数据库 Helper 函数 ---
 def get_user_profile(uid):
@@ -230,19 +245,46 @@ def save_ai_pref():
 # --- AI 调用 (通用版：修复模型混淆 Bug + 动态超时) ---
 # --- AI 调用 (通用版：支持 Google / DeepSeek / OpenRouter / Glama) ---
 # --- AI 调用 (V8.0: 含 Glama 深度调试模式) ---
-def call_ai_universal(prompt, history=[], model_override=None, timeout_override=None):
-    # 1. 确定超时
+# --- AI 服务层 (缓存客户端 + 智能重试 + JSON修复) ---
+
+@st.cache_resource
+def get_ai_client(provider, api_key, base_url=None):
+    """[性能优化] 缓存 AI 客户端连接，避免每次调用都重新握手"""
+    # 只有在使用 OpenAI SDK 的时候才初始化 Client
+    if "DeepSeek" in provider or "OpenRouter" in provider or "Glama" in provider:
+        try:
+            return OpenAI(api_key=api_key, base_url=base_url)
+        except Exception as e:
+            print(f"Client Init Error: {e}")
+            return None
+    return None
+
+
+def clean_ai_json(text):
+    """[鲁棒性] 清洗 AI 返回的 JSON，去除 Markdown 标记和不合法字符"""
+    if not text: return ""
+    # 去除 ```json 和 ``` 标记
+    text = re.sub(r'```json\s*', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'```', '', text)
+    return text.strip()
+
+
+def call_ai_universal(prompt, history=[], model_override=None, timeout_override=None, max_retries=1):
+    """
+    [功能增强] 统一 AI 调用入口：支持重试、错误捕获、客户端复用
+    """
+    # 1. 确定超时设置
     if timeout_override is not None:
         current_timeout = timeout_override
     else:
-        profile = get_user_profile(st.session_state.get('user_id'))
+        profile = get_user_profile(st.session_state.get('user_id', 'test_user'))
         settings = profile.get('settings') or {}
         current_timeout = settings.get('ai_timeout', 60)
 
-    # 2. 确定通道与模型
+    # 2. 确定服务商与模型
     provider = st.session_state.get('selected_provider', 'Gemini')
     target_model = None
-    
+
     # 优先级：Override > Glama特定 > 通用Session
     if model_override:
         target_model = model_override
@@ -256,11 +298,11 @@ def call_ai_universal(prompt, history=[], model_override=None, timeout_override=
         target_model = st.session_state.get('glama_model_id', 'openai/gpt-4o-mini')
 
     if not target_model: target_model = "gemini-1.5-flash"
-    
-    try:
-        # A. Google Gemini 官方协议
+
+    # --- 内部执行函数 (用于重试) ---
+    def _execute_call():
+        # A. Google Gemini (REST API 模式 - 不依赖 OpenAI SDK)
         if "Gemini" in provider and not model_override:
-            # ... (保持 Gemini 原有代码不变) ...
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent?key={API_KEY}"
             headers = {'Content-Type': 'application/json'}
             contents = []
@@ -268,40 +310,37 @@ def call_ai_universal(prompt, history=[], model_override=None, timeout_override=
                 role = "user" if h['role'] == 'user' else "model"
                 contents.append({"role": role, "parts": [{"text": h['content']}]})
             contents.append({"role": "user", "parts": [{"text": prompt}]})
-            
+
             resp = requests.post(url, headers=headers, json={"contents": contents}, timeout=current_timeout)
             if resp.status_code == 200:
                 return resp.json()['candidates'][0]['content']['parts'][0]['text']
-            return f"Gemini Error {resp.status_code}: {resp.text}"
+            else:
+                raise Exception(f"Gemini API Error {resp.status_code}: {resp.text}")
 
-        # B. OpenAI 兼容协议 (DeepSeek / OpenRouter / Glama)
+        # B. OpenAI 兼容模式 (DeepSeek / OpenRouter / Glama)
         else:
-            client = None
-            debug_info = "" # 用于报错时显示调试信息
-            
-            # --- 核心初始化逻辑 ---
+            # 准备参数
+            api_key = ""
+            base_url = ""
+
             if model_override and "gemini" in model_override and "openrouter" in st.secrets:
-                 client = OpenAI(api_key=st.secrets["openrouter"]["api_key"], base_url=st.secrets["openrouter"]["base_url"])
-            
+                api_key = st.secrets["openrouter"]["api_key"]
+                base_url = st.secrets["openrouter"]["base_url"]
             elif "DeepSeek" in provider:
-                client = OpenAI(api_key=st.secrets["deepseek"]["api_key"], base_url=st.secrets["deepseek"]["base_url"])
-            
+                api_key = st.secrets["deepseek"]["api_key"]
+                base_url = st.secrets["deepseek"]["base_url"]
             elif "OpenRouter" in provider:
-                client = OpenAI(api_key=st.secrets["openrouter"]["api_key"], base_url=st.secrets["openrouter"]["base_url"])
-            
+                api_key = st.secrets["openrouter"]["api_key"]
+                base_url = st.secrets["openrouter"]["base_url"]
             elif "Glama" in provider:
-                # 🔥 Glama 专项调试逻辑
                 if "glama" in st.secrets:
-                    base_url = st.secrets["glama"]["base_url"].strip() # 去除首尾空格
-                    # 强制去除末尾斜杠，防止 double slash 问题
-                    if base_url.endswith("/"): base_url = base_url[:-1]
-                    
+                    base_url = st.secrets["glama"]["base_url"].strip().rstrip("/")
                     api_key = st.secrets["glama"]["api_key"]
-                    client = OpenAI(api_key=api_key, base_url=base_url)
-                    
-                    debug_info = f"\n[Debug] URL: {base_url} | Model: {target_model}"
-                else: return "❌ Glama Secrets 未配置"
-            
+                else:
+                    return "❌ Glama Secrets 未配置"
+
+            # 获取或初始化客户端 (利用缓存)
+            client = get_ai_client(provider, api_key, base_url)
             if not client: return "AI Client 初始化失败"
 
             # 构造消息
@@ -313,19 +352,57 @@ def call_ai_universal(prompt, history=[], model_override=None, timeout_override=
 
             # 发起请求
             resp = client.chat.completions.create(
-                model=target_model, 
-                messages=messages, 
+                model=target_model,
+                messages=messages,
                 temperature=0.7,
                 timeout=current_timeout
             )
             return resp.choices[0].message.content
 
-    except Exception as e:
-        # 捕获错误并显示 Debug 信息
-        err_msg = str(e)
-        if "404" in err_msg and "Glama" in provider:
-            return f"❌ Glama 模型未找到 (404)。\n请尝试在模型名前加厂商前缀（如 google-vertex/gemini...）。{debug_info}"
-        return f"❌ 失败: AI 处理异常: {e} {debug_info if 'Glama' in provider else ''}"
+    # --- 重试逻辑 ---
+    last_error = ""
+    for attempt in range(max_retries + 1):
+        try:
+            return _execute_call()
+        except Exception as e:
+            last_error = str(e)
+            if attempt < max_retries:
+                time.sleep(1)  # 失败后暂停1秒再试
+                continue
+
+    return f"❌ AI 调用失败 (已重试{max_retries}次): {last_error}"
+
+
+def call_ai_json(prompt, model_override=None):
+    """
+    [新功能] 专门请求 JSON 数据，带自动清洗和解析，防止报错
+    """
+    # 强制要求 JSON
+    json_prompt = prompt + "\n\n请务必只返回纯 JSON 格式，不要包含 ```json 等 Markdown 标记，也不要有多余的解释文字。"
+
+    res = call_ai_universal(json_prompt, model_override=model_override)
+    if not res or "Error" in res or "失败" in res:
+        return None
+
+    try:
+        clean = clean_ai_json(res)
+        # 尝试截取第一个 { 到 最后一个 } 或者是 [ 到 ]
+        s_obj = clean.find('{');
+        e_obj = clean.rfind('}') + 1
+        s_arr = clean.find('[');
+        e_arr = clean.rfind(']') + 1
+
+        # 智能判断是对象还是数组
+        if s_arr != -1 and (s_obj == -1 or s_arr < s_obj):
+            return json.loads(clean[s_arr:e_arr])
+        elif s_obj != -1:
+            return json.loads(clean[s_obj:e_obj])
+        else:
+            return json.loads(clean)  # 尝试直接解析
+
+    except json.JSONDecodeError:
+        print(f"JSON Parse Error. Raw AI Response: {res}")
+        return None
 
 
 # --- 新增：主观题 AI 评分函数 ---
@@ -440,59 +517,187 @@ def save_material_v3(chapter_id, content, uid):
         "chapter_id": chapter_id, "content": content, "user_id": uid
     }).execute()
 
+
 def save_questions_v3(q_list, chapter_id, uid, origin="ai"):
-    data = [{
-        "chapter_id": chapter_id,
-        "user_id": uid,
-        "content": q['question'],
-        "options": q['options'],
-        "correct_answer": q['answer'],
-        "explanation": q.get('explanation', ''),
-        "type": "multi" if len(q['answer']) > 1 else "single",
-        "origin": origin,
-        "batch_source": f"Batch-{int(time.time())}"
-    } for q in q_list]
-    supabase.table("question_bank").insert(data).execute()
+    """
+    [安全增强版] 替代原有的 save_questions_v3。
+    增加了空值校验和错误捕获，防止因为一条数据格式错误导致整个入库失败。
+    """
+    if not q_list: return
+
+    data_to_insert = []
+    timestamp_str = f"Batch-{int(time.time())}"
+
+    for q in q_list:
+        # 简单校验：必须有题目内容和答案
+        if not q.get('content') or not q.get('correct_answer') or not q.get('question'):
+            # 兼容旧逻辑：有的 AI 返回 key 是 question，有的是 content
+            content = q.get('content') or q.get('question')
+            ans = q.get('correct_answer') or q.get('answer')
+            if not content: continue  # 真的没有内容，跳过
+
+            # 修正数据
+            q['content'] = content
+            q['correct_answer'] = ans
+
+        # 构造数据
+        data_to_insert.append({
+            "chapter_id": chapter_id,
+            "user_id": uid,
+            "content": q.get('content') or q.get('question'),
+            "options": q.get('options', []),
+            "correct_answer": str(q.get('correct_answer') or q.get('answer')),
+            "explanation": q.get('explanation', ''),
+            "type": q.get('type', 'single'),
+            "origin": origin,
+            "batch_source": timestamp_str
+        })
+
+    if not data_to_insert: return
+
+    try:
+        # 执行批量插入
+        supabase.table("question_bank").insert(data_to_insert).execute()
+    except Exception as e:
+        # 记录详细错误日志
+        print(f"Database Insert Error: {e}")
+        st.error(f"💾 题目入库失败：{e}")
+
+
+# --- 🆕 新增：测验状态清理函数 (防止缓存中毒) ---
+def cleanup_quiz_session():
+    """
+    清理测验相关的临时数据。
+    在【开始新练习】和【退出练习】时调用，确保 Session 干净。
+    """
+    # 1. 定义需要清理的 Key 前缀
+    target_prefixes = (
+        'grade_res_',  # AI评分结果
+        'sub_state_',  # 题目提交状态锁
+        'saved_db_',  # 数据库存库标记
+        'q_subj_',  # 主观题输入框内容
+        'q_rad_',  # 单选框状态
+        'q_',  # 多选框/其他控件状态
+        'feedback_',  # AI反馈文本
+        'score_'  # 分数
+    )
+
+    # 2. 扫描并收集要删除的 Key
+    keys_to_remove = [k for k in st.session_state.keys() if k.startswith(target_prefixes)]
+
+    # 3. 执行删除
+    for k in keys_to_remove:
+        del st.session_state[k]
+
+    # 4. 重置核心控制变量
+    # 注意：不要删 'user_id' 等全局配置
+    core_keys = ['quiz_active', 'quiz_data', 'q_idx', 'js_start_time']
+    for k in core_keys:
+        if k in st.session_state:
+            del st.session_state[k]
 
 # --- 文件解析 (PDF/Docx) ---
-def extract_pdf(file, start=1, end=None):
+def extract_pdf(file, start=1, end=None, max_pages=50):
+    """
+    [性能优化版] 替代原有的 extract_pdf。
+    保留了函数名，但增加了内存保护、进度条和最大页数限制。
+    """
     text = ""
     try:
         with pdfplumber.open(file) as pdf:
             total = len(pdf.pages)
+
+            # 自动修正结束页
             if end is None or end > total: end = total
             start = max(1, start)
-            end = min(total, end)
+
+            # 安全限制：防止用户上传几百页的书直接把内存撑爆
+            # 如果后续代码没有传 max_pages，默认限制 50 页
+            if (end - start) > max_pages:
+                st.warning(f"⚠️ 为保护系统性能，仅读取前 {max_pages} 页 (原请求 {end - start} 页)。")
+                end = start + max_pages
+
+            # 进度条 UI (用户能看到进度了)
+            progress_bar = st.progress(0)
+            status_text = st.empty()
 
             for i in range(start - 1, end):
+                # 显式进度更新
+                current_idx = i - (start - 1)
+                total_process = end - (start - 1)
+                # 防止除以0
+                prog_val = (current_idx + 1) / total_process if total_process > 0 else 0
+                progress_bar.progress(min(prog_val, 1.0))
+                status_text.caption(f"正在读取第 {i + 1} 页...")
+
                 page = pdf.pages[i]
 
-                # === 优化点 1: 尝试提取表格并转为 Markdown 格式 ===
-                # (这会比单纯提取文字好很多，能保留表格结构)
+                # 尝试提取表格 (保持原有逻辑，转为 Markdown 表格)
                 tables = page.extract_tables()
                 if tables:
                     for table in tables:
-                        # 简单的将表格转为 md 格式
-                        # | 列1 | 列2 |
                         row_str = []
                         for row in table:
-                            # 处理 None 值
                             clean_row = [str(cell).replace('\n', ' ') if cell else '' for cell in row]
                             row_str.append("| " + " | ".join(clean_row) + " |")
                         text += "\n".join(row_str) + "\n\n"
 
-                # === 优化点 2: 提取文字 (layout=True 保持视觉布局) ===
-                # layout=True 会尝试模仿原书的左右排版，但可能会产生多余空格
-                # 现在的 AI 对空格不敏感，所以用默认提取更稳健，但我们可以手动加页码标记
+                # 提取文本
                 page_text = page.extract_text()
                 if page_text:
-                    # 人为加上页码标记，帮助 AI 定位
                     text += f"\n--- Page {i + 1} ---\n{page_text}\n"
+
+                # [关键优化] 没读 10 页清理一次内存，防止 PDF 过大导致页面崩溃
+                if i % 10 == 0:
+                    gc.collect()
+
+            status_text.empty()
+            progress_bar.empty()
+
+        if len(text) < 100:
+            st.warning("⚠️ 提取到的文字极少，该 PDF 可能是图片扫描件，AI 无法识别。")
 
         return text
     except Exception as e:
-        print(f"PDF Err: {e}")
+        st.error(f"PDF 读取出错: {e}")
         return ""
+
+
+def save_questions_safe(q_list, chapter_id, uid, origin="ai"):
+    """
+    [数据安全] 批量插入，带错误捕获，不使用不稳定的 transaction 写法
+    """
+    if not q_list: return
+
+    data_to_insert = []
+    for q in q_list:
+        # 简单校验
+        if not q.get('content') or not q.get('correct_answer'):
+            continue
+
+        data_to_insert.append({
+            "chapter_id": chapter_id,
+            "user_id": uid,
+            "content": q['content'],
+            "options": q.get('options', []),
+            "correct_answer": q['correct_answer'],
+            "explanation": q.get('explanation', ''),
+            "type": q.get('type', 'single'),
+            "origin": origin,
+            "batch_source": f"Batch-{int(time.time())}"
+        })
+
+    if not data_to_insert: return
+
+    try:
+        # Supabase Python SDK 的 insert 通常是原子的 (单次 HTTP 请求)
+        res = supabase.table("question_bank").insert(data_to_insert).execute()
+        return res
+    except Exception as e:
+        # 记录详细错误日志
+        print(f"Database Insert Error: {e}")
+        st.error("💾 题目入库失败，请检查网络或数据格式。")
+        return None
 
 def extract_docx(file):
     try:
@@ -1402,15 +1607,32 @@ elif menu == "🎓 AI 课堂 (讲义)":
                     c_tts, c_del = st.columns([1, 1])
                     with c_tts:
                         audio_key = f"audio_{les_id}"
+
                         if st.button("🎧 生成语音 (Edge-TTS)", key=f"btn_tts_{les_id}"):
-                            with st.spinner("🎙️ 合成中..."):
+                            with st.spinner("🎙️ 正在合成金牌讲师语音..."):
+                                mp3_path = None  # 初始化变量
                                 try:
+                                    # 1. 生成音频
+                                    # 提取前 4000 字防止超时
                                     clean_text = les['content'][:4000]
-                                    mp3_path = asyncio.run(generate_audio_file(clean_text))
+                                    mp3_path = generate_audio_file(clean_text)
+
+                                    # 2. 读取到内存 (Session State)
                                     with open(mp3_path, "rb") as f:
-                                        st.session_state[audio_key] = f.read()
+                                        audio_bytes = f.read()
+                                    st.session_state[audio_key] = audio_bytes
+
                                 except Exception as e:
-                                    st.error(f"语音失败: {e}")
+                                    st.error(f"语音生成失败: {e}")
+
+                                finally:
+                                    # 🔥 终极保险：无论上面成功还是报错，只要文件存在，必定删除
+                                    if mp3_path and os.path.exists(mp3_path):
+                                        try:
+                                            os.remove(mp3_path)
+                                        except:
+                                            pass  # 如果删不掉就算了，系统会自动清理临时目录
+
                         if audio_key in st.session_state:
                             st.audio(st.session_state[audio_key], format="audio/mp3")
 
@@ -1661,15 +1883,19 @@ elif menu == "📝 章节特训":
                     total_q = 0; done_ids = []
 
                 st.divider()
-                
+
                 # === 🎯 练习模式选择 ===
                 mode = st.radio("练习策略", [
-                    "🧹 消灭库存 (只做未掌握的题)", 
-                    "🎲 随机巩固 (全库随机抽)", 
+                    "🧹 消灭库存 (只做未掌握的题)",
+                    "🎲 随机巩固 (全库随机抽)",
                     "🧠 AI 基于教材出新题"
                 ], horizontal=True)
-                
+
+                # 🔥 修改点 A：点击“开始练习”时清理旧数据
                 if st.button("🚀 开始练习", type="primary", use_container_width=True):
+                    # 1. 先彻底清理旧缓存
+                    cleanup_quiz_session()
+
                     # --- 策略 A: 消灭库存 ---
                     if "消灭" in mode:
                         if total_q == 0:
@@ -1678,8 +1904,20 @@ elif menu == "📝 章节特训":
                             st.balloons()
                             st.success("🎉 本章题目已全部掌握！")
                         else:
-                            # 修复：确保 not_.in_ 参数格式正确
-                            qs = supabase.table("question_bank").select("*").eq("chapter_id", cid).not_.in_("id", done_ids).limit(20).execute().data
+                            # (此处使用之前修复过的稳健查询代码)
+                            try:
+                                if done_ids:
+                                    ids_str = f"({','.join(map(str, done_ids))})"
+                                    qs = supabase.table("question_bank").select("*").eq("chapter_id", cid).filter("id",
+                                                                                                                  "not.in",
+                                                                                                                  ids_str).limit(
+                                        20).execute().data
+                                else:
+                                    qs = supabase.table("question_bank").select("*").eq("chapter_id", cid).limit(
+                                        20).execute().data
+                            except:
+                                qs = []
+
                             if qs:
                                 random.shuffle(qs)
                                 st.session_state.quiz_data = qs[:10]
@@ -1781,7 +2019,7 @@ elif menu == "📝 章节特训":
             with c_idx: st.caption(f"当前进度：{idx + 1} / {data_len}")
             with c_end:
                 if st.button("🏁 结束"):
-                    st.session_state.quiz_active = False
+                    cleanup_quiz_session()  # <--- 调用清理
                     st.rerun()
 
             # 数据解析
@@ -1835,37 +2073,41 @@ elif menu == "📝 章节特训":
             if st.button("✅ 提交答案", use_container_width=True) and not st.session_state[sub_key]:
                 st.session_state[sub_key] = True
                 st.rerun()
-            
-            # --- 判分与反馈 ---
-            if st.session_state[sub_key]:
-                is_correct_bool = False
-                ai_feedback = ""
-                
-                # A. 主观题：AI 评分
-                if q_type == 'subjective':
-                    with st.spinner("🤖 AI 阅卷老师正在批改你的答案..."):
-                        # 如果还没评过分，就评一次并存Session防止刷新消失
-                        grade_key = f"grade_res_{idx}"
-                        if grade_key not in st.session_state:
-                            grade_res = ai_grade_subjective(user_val, std_ans, q_text)
-                            st.session_state[grade_key] = grade_res
-                        
-                        res = st.session_state[grade_key]
-                        score = res.get('score', 0)
-                        ai_feedback = res.get('feedback', '')
-                        
-                        is_correct_bool = (score >= 60)
-                        
-                        color = "#00C090" if score >= 80 else ("#ff9800" if score >= 60 else "#dc3545")
-                        st.markdown(f"""
-                        <div style="padding:15px; background:{color}20; border-left:5px solid {color}; border-radius:5px; margin:10px 0;">
-                            <h3 style="color:{color}; margin:0">得分：{score} / 100</h3>
-                            <p style="margin-top:5px"><b>👩‍🏫 点评：</b>{ai_feedback}</p>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        
-                        with st.expander("查看参考答案"):
-                            st.code(std_ans, language="markdown")
+
+                # --- 判分与反馈 ---
+                if st.session_state[sub_key]:
+                    is_correct_bool = False
+                    ai_feedback = ""
+
+                    # A. 主观题：AI 评分
+                    if q_type == 'subjective':
+                        with st.spinner("🤖 AI 阅卷老师正在批改你的答案..."):
+                            # 1. 评分并缓存 (保持存字典结构，不破坏存库逻辑)
+                            grade_key = f"grade_res_{idx}"
+                            if grade_key not in st.session_state:
+                                grade_res = ai_grade_subjective(user_val, std_ans, q_text)
+                                st.session_state[grade_key] = grade_res
+
+                            # 2. 读取数据
+                            res = st.session_state[grade_key]
+                            score = res.get('score', 0)
+                            ai_feedback = res.get('feedback', '')
+
+                            # 3. 判定逻辑
+                            is_correct_bool = (score >= 60)
+
+                            # 4. UI 展示 (采纳 DeepSeek 的美化建议)
+                            color = "#00C090" if score >= 80 else ("#ff9800" if score >= 60 else "#dc3545")
+                            st.markdown(f"""
+                                    <div style="padding:15px; background:{color}20; border-left:5px solid {color}; border-radius:5px; margin:10px 0;">
+                                        <h3 style="color:{color}; margin:0">得分：{score} / 100</h3>
+                                        <p style="margin-top:5px"><b>👩‍🏫 点评：</b>{ai_feedback}</p>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+
+                            # 5. 展示标准答案
+                            with st.expander("查看参考答案"):
+                                st.code(std_ans, language="markdown")
 
                 # B. 客观题：逻辑匹配
                 else:
@@ -1939,7 +2181,7 @@ elif menu == "📝 章节特训":
                     st.balloons()
                     st.success("🎉 本轮练习全部完成！")
                     if st.button("返回主菜单"):
-                        st.session_state.quiz_active = False
+                        cleanup_quiz_session()
                         st.rerun()
 
 
