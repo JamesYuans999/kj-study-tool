@@ -3270,44 +3270,106 @@ elif menu == "🛠️ 数据管理 & 补录":
     # ---------------------------------------------------------
     with tab_upload:
         st.markdown("#### 📥 通用数据导入中心")
-        st.caption("支持导入整理好的 **题库(Excel)** 或 **纯文本教材(Word/Txt)**，不消耗 Token。")
+        st.caption("支持导入整理好的 **题库(Excel)** 或 **纯文本教材(Word/Txt)**。")
 
-        # 1. 选择导入类型
+        # 1. 第一层：选择数据类型
         import_type = st.radio(
-            "请选择要导入的数据类型：",
+            "1. 请选择要导入的数据类型：",
             ["📝 题库数据 (Excel/CSV)", "📘 教材原文 (Word/Txt)"],
             horizontal=True
         )
 
         st.divider()
 
-        # 2. 渲染章节选择器 (两边通用)
-        # 注意：这里我们复用 render_selectors，不管导什么都需要先选章节
-        cid_u, c_name_u = render_selectors("u")
+        # 2. 第二层：选择目标位置 (现有 vs 新建)
+        target_mode = st.radio(
+            "2. 请选择导入目标：",
+            ["📂 导入到现有章节 (追加)", "🆕 新建书籍/章节 (新开)"],
+            horizontal=True
+        )
 
-        if not cid_u:
-            st.info("👈 请先在上方下拉框选择 **目标章节**，数据将导入到该章节中。")
+        final_cid = None  # 最终的目标章节ID
+        final_c_name = ""  # 用于显示的章节名
+
+        # === 逻辑分支 A: 现有章节 ===
+        if "现有" in target_mode:
+            # 这里调用选择器时，filter_mode=None，确保显示所有书（无论有没有教材）
+            # 因为你要导入数据，所以应该允许往任何书里导
+            cid_exist, c_name_exist = render_selectors("upload_exist", filter_mode=None)
+
+            if cid_exist:
+                final_cid = cid_exist
+                final_c_name = c_name_exist
+            else:
+                st.info("👈 请在上方选择目标章节。")
+
+        # === 逻辑分支 B: 新建书籍/章节 ===
+        else:
+            c_new1, c_new2, c_new3 = st.columns(3)
+            with c_new1:
+                # 必须选科目
+                subjects = get_subjects()
+                s_names = [s['name'] for s in subjects] if subjects else []
+                sel_s_new = st.selectbox("所属科目", s_names, key="new_import_sub")
+                # 找到 sid
+                sel_sid = next((s['id'] for s in subjects if s['name'] == sel_s_new), None) if subjects else None
+
+            with c_new2:
+                new_book_title = st.text_input("新书籍名称", placeholder="例如：2026中级经济法-考前押题")
+
+            with c_new3:
+                new_chap_title = st.text_input("新章节名称", value="全文", placeholder="例如：第一章 总论")
+
+            # 预校验
+            if sel_sid and new_book_title and new_chap_title:
+                st.success(f"准备创建：📘 {new_book_title} > 📑 {new_chap_title}")
+                # 此时我们还没有 cid，需要在点击按钮那一刻创建
+            else:
+                st.warning("请补全书籍和章节名称。")
 
         st.divider()
 
-        # === 模式 A: 导入题库 ===
+        # 3. 第三层：上传与执行区
+
+        # >>>>>>>> 场景 1: 题库导入 <<<<<<<<
         if "题库" in import_type:
             c_d1, c_d2 = st.columns([1, 2])
             with c_d1:
-                st.markdown("**1. 下载模板**")
+                st.markdown("**模板下载**")
                 template_data = [{"题型(必填)": "single", "题目内容(必填)": "...", "选项(用|分隔)": "A.x | B.y",
                                   "正确答案(必填)": "A", "解析": ""}]
                 df_temp = pd.DataFrame(template_data)
                 csv = df_temp.to_csv(index=False).encode('utf-8-sig')
-                st.download_button("⬇️ 题库导入模板.csv", data=csv, file_name="题库模板.csv", mime="text/csv")
+                st.download_button("⬇️ 题库模板.csv", data=csv, file_name="题库模板.csv", mime="text/csv")
 
             with c_d2:
-                st.markdown("**2. 上传文件**")
                 up_excel = st.file_uploader("上传 CSV/Excel", type=["csv", "xlsx"], key="up_q_bank")
 
-            if up_excel and cid_u:
+            # 只有当 (选择了现有章节 OR 填写了新建信息) AND 上传了文件 时，按钮才可用
+            ready_to_import = up_excel is not None
+            if "现有" in target_mode and not final_cid: ready_to_import = False
+            if "新建" in target_mode and (not new_book_title or not new_chap_title): ready_to_import = False
+
+            if ready_to_import:
                 if st.button("🚀 开始导入题库", type="primary"):
                     try:
+                        # --- 如果是新建模式，先创建 DB 记录 ---
+                        if "新建" in target_mode:
+                            # 1. 建书
+                            b_res = supabase.table("books").insert({
+                                "user_id": user_id, "subject_id": sel_sid,
+                                "title": new_book_title, "total_pages": 0
+                            }).execute()
+                            new_bid = b_res.data[0]['id']
+                            # 2. 建章
+                            c_res = supabase.table("chapters").insert({
+                                "user_id": user_id, "book_id": new_bid,
+                                "title": new_chap_title, "start_page": 0, "end_page": 0
+                            }).execute()
+                            final_cid = c_res.data[0]['id']
+                            final_c_name = new_chap_title
+
+                        # --- 开始读取文件 ---
                         if up_excel.name.endswith('.csv'):
                             df_new = pd.read_csv(up_excel)
                         else:
@@ -3316,6 +3378,7 @@ elif menu == "🛠️ 数据管理 & 补录":
                         bar = st.progress(0)
                         batch_data = []
                         for i, row in df_new.iterrows():
+                            # (数据清洗逻辑保持不变)
                             content = row.get('题目内容(必填)') or row.get('题目内容') or row.get('content')
                             ans = row.get('正确答案(必填)') or row.get('正确答案') or row.get('correct_answer')
                             if pd.isna(content) or pd.isna(ans): continue
@@ -3325,7 +3388,7 @@ elif menu == "🛠️ 数据管理 & 补录":
                                          str(x).strip()] if opts_raw else []
 
                             batch_data.append({
-                                "chapter_id": cid_u, "user_id": user_id,
+                                "chapter_id": final_cid, "user_id": user_id,
                                 "type": str(row.get('题型(必填)', 'single')).strip(),
                                 "content": str(content), "correct_answer": str(ans),
                                 "explanation": str(row.get('解析', '')), "options": opts_list,
@@ -3337,51 +3400,63 @@ elif menu == "🛠️ 数据管理 & 补录":
                             bar.progress((i + 1) / len(df_new))
 
                         if batch_data: supabase.table("question_bank").insert(batch_data).execute()
-                        st.success(f"🎉 成功导入 {len(df_new)} 道题目！")
+
+                        st.balloons()
+                        st.success(f"🎉 成功导入 {len(df_new)} 道题目至：{final_c_name}")
                         time.sleep(2);
                         st.rerun()
+
                     except Exception as e:
                         st.error(f"导入失败: {e}")
 
-        # === 模式 B: 导入教材 (新增) ===
+        # >>>>>>>> 场景 2: 教材导入 <<<<<<<<
         else:
-            st.info("💡 提示：导入的 Word/Txt 内容将作为**教材片段**直接存入数据库，供 AI 课堂备课使用。")
-
+            st.info("💡 提示：Word/Txt 内容将作为**教材片段**存入数据库。")
             up_doc = st.file_uploader("上传 Word (.docx) 或 文本 (.txt)", type=["docx", "txt"], key="up_doc_mat")
 
-            if up_doc and cid_u:
+            ready_to_import = up_doc is not None
+            if "现有" in target_mode and not final_cid: ready_to_import = False
+            if "新建" in target_mode and (not new_book_title or not new_chap_title): ready_to_import = False
+
+            if ready_to_import:
                 if st.button("🚀 开始导入教材", type="primary"):
-                    content_extracted = ""
                     try:
+                        # --- 如果是新建模式，先创建 DB 记录 ---
+                        if "新建" in target_mode:
+                            b_res = supabase.table("books").insert({
+                                "user_id": user_id, "subject_id": sel_sid,
+                                "title": new_book_title, "total_pages": 0
+                            }).execute()
+                            new_bid = b_res.data[0]['id']
+                            c_res = supabase.table("chapters").insert({
+                                "user_id": user_id, "book_id": new_bid,
+                                "title": new_chap_title, "start_page": 0, "end_page": 0
+                            }).execute()
+                            final_cid = c_res.data[0]['id']
+                            final_c_name = new_chap_title
+
+                        # --- 解析文件 ---
+                        content_extracted = ""
                         with st.spinner("正在解析文件..."):
-                            # 1. 解析 TXT
                             if up_doc.name.endswith('.txt'):
                                 content_extracted = up_doc.read().decode("utf-8")
-
-                            # 2. 解析 Word
                             elif up_doc.name.endswith('.docx'):
                                 doc = docx.Document(up_doc)
-                                # 拼接所有段落，用换行符分隔
                                 content_extracted = "\n".join([p.text for p in doc.paragraphs])
 
-                            # 3. 清洗与入库
                             if len(content_extracted) < 10:
                                 st.error("❌ 文件内容过少，无法导入。")
                             else:
-                                # 简单的清洗
                                 clean_content = clean_textbook_content(content_extracted)
-
-                                # 入库
-                                save_material_v3(cid_u, clean_content, user_id)
+                                save_material_v3(final_cid, clean_content, user_id)
 
                                 st.balloons()
-                                st.success(f"🎉 教材导入成功！已存入章节：{c_name_u}")
-                                st.caption(f"共导入 {len(clean_content)} 字。")
+                                st.success(f"🎉 教材导入成功！已存入：{final_c_name}")
                                 time.sleep(2);
                                 st.rerun()
 
                     except Exception as e:
-                        st.error(f"解析或导入失败: {e} (如果是 txt 文件，请确保是 utf-8 编码)")
+                        st.error(f"导入失败: {e}")
 
 
 
