@@ -20,428 +20,82 @@ import re
 import gc
 
 # ==============================================================================
-# 1. 全局配置与“奶油绿便当盒”风格还原 (CSS 终极修复版)
+# 1. 全局配置与 CSS (修正版：回归原生，修复点击失效)
 # ==============================================================================
-st.set_page_config(page_title="中级会计 AI 私教 Pro", page_icon="🥝", layout="wide")
+st.set_page_config(page_title="中级会计 AI 私教 Pro", page_icon="🥝", layout="wide", initial_sidebar_state="auto")
 
 st.markdown("""
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
 <style>
-/* ==============================================================================
-   🎯 移动端导航栏终极修复方案
-   ============================================================================== */
-
-/* 基础样式保持不变 */
-.stApp {
-    background-color: #F9F9F0;
-    font-family: 'Segoe UI', 'Roboto', sans-serif;
-}
-
-/* 侧边栏样式 */
-[data-testid="stSidebar"] {
-    background-color: #FFFFFF !important;
-    border-right: 1px solid rgba(0,0,0,0.05);
-    box-shadow: 4px 0 15px rgba(0,0,0,0.02);
-}
-
-/* 卡片样式 */
-.css-card {
-    background-color: #FFFFFF;
-    border-radius: 16px;
-    padding: 24px;
-    margin-bottom: 20px;
-    border: 1px solid #F0F0F0;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.02);
-    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
-    position: relative;
-    overflow: hidden;
-}
-.css-card:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 12px 24px rgba(0, 192, 144, 0.15);
-    border-color: #00C090;
-}
-
-/* 统计数字 */
-.stat-title { font-size: 0.85rem; color: #888; text-transform: uppercase; letter-spacing: 1px; font-weight: 700; }
-.stat-value { font-size: 2.2rem; font-weight: 800; color: #2C3E50; letter-spacing: -1px; }
-.stat-icon { position: absolute; right: 20px; top: 20px; font-size: 2rem; color: rgba(0,192,144, 0.1); }
-
-/* 按钮美化 */
-.stButton>button {
-    background: linear-gradient(135deg, #00C090 0%, #00a87e 100%);
-    color: white; border: none; border-radius: 12px; height: 48px; font-weight: 600;
-    box-shadow: 0 4px 10px rgba(0, 192, 144, 0.2); transition: all 0.3s ease; padding: 0 25px;
-}
-.stButton>button:hover {
-    transform: translateY(-2px); box-shadow: 0 6px 15px rgba(0, 192, 144, 0.4); filter: brightness(1.05); color: white;
-}
-
-/* 聊天与选项 */
-.option-item { background: #fff; border: 1px solid #f0f0f0; padding: 12px 15px; border-radius: 10px; margin-bottom: 8px; border-left: 4px solid #e0e0e0; color: #495057; }
-.chat-user { background-color: #E3F2FD; padding: 12px 18px; border-radius: 15px 15px 0 15px; margin: 10px 0 10px auto; max-width: 85%; color: #1565C0; }
-.chat-ai { background-color: #FFFFFF; padding: 12px 18px; border-radius: 15px 15px 15px 0; margin: 10px auto 10px 0; max-width: 85%; border-left: 4px solid #00C090; }
-
-/* 成功/警告框 */
-.success-box { padding: 15px; background: #E8F5E9; border-radius: 10px; color: #2E7D32; border: 1px solid #C8E6C9; margin-bottom: 10px;}
-.warn-box { padding: 15px; background: #FFF8E1; border-radius: 10px; color: #F57F17; border: 1px solid #FFE082; margin-bottom: 10px;}
-
-/* ==============================================================================
-   🔥 移动端导航栏修复 - 核心修复部分
-   ============================================================================== */
-
-/* 1. 确保侧边栏开关按钮始终可见 - 这是最关键的部分 */
-div[data-testid="collapsedControl"] button {
-    display: block !important;
-    visibility: visible !important;
-    opacity: 1 !important;
-    position: fixed !important;
-    top: 15px !important;
-    left: 15px !important;
-    z-index: 1000000 !important;
-    background: #00C090 !important;
-    border: 2px solid white !important;
-    border-radius: 50% !important;
-    width: 50px !important;
-    height: 50px !important;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.3) !important;
-    color: white !important;
-    font-size: 24px !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    cursor: pointer !important;
-}
-
-/* 汉堡菜单图标 */
-div[data-testid="collapsedControl"] button::before {
-    content: "☰" !important;
-    position: absolute !important;
-    top: 50% !important;
-    left: 50% !important;
-    transform: translate(-50%, -50%) !important;
-    font-size: 24px !important;
-    line-height: 1 !important;
-}
-
-/* 移除按钮上的任何文本 */
-div[data-testid="collapsedControl"] button > * {
-    display: none !important;
-}
-
-/* 2. 隐藏不必要的Streamlit元素 */
-[data-testid="stDecoration"] {
-    display: none !important;
-}
-
-[data-testid="stToolbar"] {
-    display: none !important;
-}
-
-[data-testid="stHeader"] {
-    display: none !important;
-}
-
-/* 3. 为侧边栏添加手机端优化样式 */
-section[data-testid="stSidebar"] {
-    z-index: 999999 !important;
-    min-width: 280px !important;
-    max-width: 85vw !important;
-}
-
-/* 4. 确保主内容区域有足够的上边距，防止被导航栏遮挡 */
-.main .block-container {
-    padding-top: 70px !important;
-    padding-left: 1rem !important;
-    padding-right: 1rem !important;
-}
-
-/* 5. 移动端专用样式 */
-@media (max-width: 768px) {
-    /* 移动端侧边栏样式 */
-    section[data-testid="stSidebar"] {
-        position: fixed !important;
-        top: 0 !important;
-        left: 0 !important;
-        height: 100vh !important;
-        transform: translateX(-100%) !important;
-        transition: transform 0.3s ease-in-out !important;
+    /* === 1. 顶部导航栏 (Header) 修复 === */
+    /* 让 Header 稍微透明一点，但保留背景，防止内容穿透 */
+    header[data-testid="stHeader"] {
+        background-color: rgba(255, 255, 255, 0.95) !important;
+        border-bottom: 1px solid #f0f0f0;
+        z-index: 100 !important; /* 保证层级正常 */
     }
 
-    /* 侧边栏展开状态 */
-    section[data-testid="stSidebar"][aria-expanded="true"] {
-        transform: translateX(0) !important;
+    /* 隐藏顶部的彩虹装饰条 */
+    [data-testid="stDecoration"] {
+        display: none !important;
     }
 
-    /* 侧边栏遮罩层 */
-    .sidebar-backdrop {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: rgba(0, 0, 0, 0.5);
-        z-index: 999998;
-        display: none;
+    /* === 2. 侧边栏开关按钮 (汉堡菜单) === */
+    /* 针对新版 Streamlit 的 ID */
+    button[data-testid="stSidebarCollapsedControl"] {
+        color: #00C090 !important; /* 强制改成绿色 */
+        display: block !important;
+        font-weight: bold;
+        z-index: 101 !important; /* 比 Header 高一层，确保能点到 */
     }
 
-    section[data-testid="stSidebar"][aria-expanded="true"] + .sidebar-backdrop {
-        display: block;
+    /* 针对旧版 Streamlit 的 ID (兼容性) */
+    [data-testid="collapsedControl"] {
+        color: #00C090 !important;
+        display: block !important;
+        z-index: 101 !important;
     }
 
-    /* 移动端卡片调整 */
+    /* === 3. 手机端适配 (Max Width 768px) === */
+    @media (max-width: 768px) {
+        /* 调整顶部留白，防止内容被 Header 挡住 */
+        .main .block-container {
+            padding-top: 4rem !important;
+            padding-left: 1rem !important;
+            padding-right: 1rem !important;
+        }
+
+        /* 强制侧边栏在手机上占满宽度或适中 */
+        [data-testid="stSidebar"] {
+            width: 300px !important; 
+            max-width: 85vw !important;
+        }
+    }
+
+    /* === 4. UI 美化 (保持之前的奶油风) === */
+    .stApp { background-color: #F9F9F0; font-family: 'Segoe UI', sans-serif; }
+
+    /* 侧边栏 */
+    [data-testid="stSidebar"] { background-color: #FFFFFF; border-right: 1px solid #eee; }
+
+    /* 卡片 */
     .css-card {
-        padding: 16px !important;
-        margin-bottom: 16px !important;
+        background: #fff; border-radius: 12px; padding: 20px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.03); border: 1px solid #eee; margin-bottom: 15px;
     }
 
-    .stat-value {
-        font-size: 1.8rem !important;
+    /* 按钮 */
+    .stButton>button {
+        background: #00C090; color: white; border: none; border-radius: 8px;
+        height: 45px; font-weight: 600; width: 100%;
     }
+    .stButton>button:hover { background: #00a87e; color: white; }
 
-    /* 确保按钮在移动端足够大 */
-    .stButton > button {
-        min-height: 48px !important;
-        padding: 0 20px !important;
-    }
-}
+    /* 统计字体 */
+    .stat-value { font-size: 2rem; font-weight: 800; color: #333; }
 
-/* 6. 创建一个自定义的固定导航栏作为备用方案 */
-#custom-mobile-nav-bar {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 60px;
-    background: linear-gradient(135deg, #00C090 0%, #00a87e 100%);
-    z-index: 999997;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 16px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-}
-
-#custom-mobile-nav-bar .nav-title {
-    color: white;
-    font-weight: bold;
-    font-size: 18px;
-    margin-left: 50px;
-}
-
-#custom-mobile-nav-bar .nav-toggle {
-    background: rgba(255,255,255,0.2);
-    border: none;
-    color: white;
-    font-size: 24px;
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-}
-
-/* 7. 确保页面内容不会被导航栏遮挡 */
-.stApp > header {
-    display: none !important;
-}
-
-/* 8. 修复滚动问题 */
-html, body {
-    overflow-x: hidden;
-}
-
-/* 9. 强制显示侧边栏的备用选择器 */
-button[data-testid="baseButton-header"],
-button[title="View sidebar"] {
-    display: block !important;
-    position: fixed !important;
-    top: 15px !important;
-    left: 15px !important;
-    z-index: 1000000 !important;
-    background: #00C090 !important;
-    color: white !important;
-    border-radius: 50% !important;
-    width: 50px !important;
-    height: 50px !important;
-    font-size: 24px !important;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.3) !important;
-}
-
-/* 10. 为所有可能的侧边栏按钮选择器设置样式 */
-button:has(svg[data-testid="stSidebarCollapsedIcon"]),
-button:has(svg[aria-label="Open sidebar"]) {
-    display: block !important;
-    position: fixed !important;
-    top: 15px !important;
-    left: 15px !important;
-    z-index: 1000000 !important;
-    background: #00C090 !important;
-    color: white !important;
-    border-radius: 50% !important;
-    width: 50px !important;
-    height: 50px !important;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.3) !important;
-}
-
-/* 11. 确保页面加载时有正确的间距 */
-.stApp > div:first-child {
-    padding-top: 60px !important;
-}
 </style>
 """, unsafe_allow_html=True)
-
-# 添加移动端导航增强脚本
-components.html("""
-<!-- 侧边栏遮罩层 -->
-<div class="sidebar-backdrop" onclick="closeSidebar()"></div>
-
-<!-- 自定义移动端导航栏 -->
-<div id="custom-mobile-nav-bar" style="display: none;">
-    <button class="nav-toggle" onclick="toggleSidebar()">☰</button>
-    <div class="nav-title">会计私教 Pro</div>
-</div>
-
-<script>
-// 检测是否为移动设备
-function isMobile() {
-    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
-           window.innerWidth <= 768;
-}
-
-// 切换侧边栏
-function toggleSidebar() {
-    // 方法1: 尝试点击Streamlit的原生按钮
-    const streamlitButton = document.querySelector('div[data-testid="collapsedControl"] button') || 
-                           document.querySelector('button[data-testid="baseButton-header"]') ||
-                           document.querySelector('button[title="View sidebar"]');
-
-    if (streamlitButton) {
-        streamlitButton.click();
-    } else {
-        // 方法2: 发送键盘事件 (备用方法)
-        const event = new KeyboardEvent('keydown', {
-            key: 'Escape',
-            code: 'Escape',
-            keyCode: 27
-        });
-        document.dispatchEvent(event);
-    }
-}
-
-// 关闭侧边栏
-function closeSidebar() {
-    const sidebar = document.querySelector('section[data-testid="stSidebar"]');
-    if (sidebar && sidebar.getAttribute('aria-expanded') === 'true') {
-        toggleSidebar();
-    }
-}
-
-// 创建或显示自定义导航栏
-function setupMobileNavigation() {
-    if (!isMobile()) return;
-
-    // 显示自定义导航栏
-    const customNav = document.getElementById('custom-mobile-nav-bar');
-    if (customNav) {
-        customNav.style.display = 'flex';
-    }
-
-    // 确保主内容有足够的上边距
-    const mainContent = document.querySelector('.main .block-container');
-    if (mainContent) {
-        mainContent.style.paddingTop = '70px';
-    }
-
-    // 每2秒检查一次侧边栏按钮是否可见
-    const checkInterval = setInterval(() => {
-        const sidebarToggle = document.querySelector('div[data-testid="collapsedControl"] button');
-
-        if (!sidebarToggle || window.getComputedStyle(sidebarToggle).display === 'none') {
-            // 如果原按钮不可见，显示我们的自定义按钮
-            if (customNav) {
-                customNav.style.display = 'flex';
-            }
-
-            // 创建一个备用按钮
-            if (!document.getElementById('emergency-nav-button')) {
-                const emergencyBtn = document.createElement('button');
-                emergencyBtn.id = 'emergency-nav-button';
-                emergencyBtn.innerHTML = '☰';
-                emergencyBtn.style.cssText = `
-                    position: fixed !important;
-                    top: 15px !important;
-                    left: 15px !important;
-                    z-index: 1000001 !important;
-                    background: #00C090 !important;
-                    color: white !important;
-                    border: 2px solid white !important;
-                    border-radius: 50% !important;
-                    width: 50px !important;
-                    height: 50px !important;
-                    font-size: 24px !important;
-                    box-shadow: 0 2px 10px rgba(0,0,0,0.3) !important;
-                    cursor: pointer !important;
-                    display: flex !important;
-                    align-items: center !important;
-                    justify-content: center !important;
-                `;
-                emergencyBtn.onclick = toggleSidebar;
-                document.body.appendChild(emergencyBtn);
-            }
-        } else {
-            // 如果原按钮可见，确保它被正确显示
-            sidebarToggle.style.display = 'block !important';
-            sidebarToggle.style.visibility = 'visible !important';
-            sidebarToggle.style.opacity = '1 !important';
-        }
-    }, 2000);
-}
-
-// 页面加载完成后初始化
-document.addEventListener('DOMContentLoaded', function() {
-    // 延迟执行，确保Streamlit完全加载
-    setTimeout(setupMobileNavigation, 2000);
-
-    // 监听窗口大小变化
-    window.addEventListener('resize', function() {
-        setupMobileNavigation();
-    });
-
-    // 点击遮罩层关闭侧边栏
-    window.closeSidebar = closeSidebar;
-});
-
-// 额外的保险：直接修改Streamlit的按钮样式
-(function() {
-    const style = document.createElement('style');
-    style.textContent = `
-        /* 强制所有侧边栏相关按钮可见 */
-        div[data-testid="collapsedControl"],
-        button[kind="header"],
-        button[data-testid="baseButton-header"],
-        button[title="View sidebar"] {
-            display: block !important;
-            position: fixed !important;
-            top: 15px !important;
-            left: 15px !important;
-            z-index: 1000000 !important;
-            opacity: 1 !important;
-            visibility: visible !important;
-        }
-
-        /* 移动端特殊处理 */
-        @media (max-width: 768px) {
-            .stApp > div:first-child {
-                padding-top: 70px !important;
-            }
-        }
-    `;
-    document.head.appendChild(style);
-})();
-</script>
-""", height=0)
 
 # ==============================================================================
 # 2. 数据库连接与配置
