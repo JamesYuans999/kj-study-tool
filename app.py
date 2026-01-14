@@ -82,7 +82,7 @@ st.markdown("""
     .success-box { padding: 15px; background: #E8F5E9; border-radius: 10px; color: #2E7D32; border: 1px solid #C8E6C9; margin-bottom: 10px;}
     .warn-box { padding: 15px; background: #FFF8E1; border-radius: 10px; color: #F57F17; border: 1px solid #FFE082; margin-bottom: 10px;}
 
-    /* === 界面元素隐藏与手机端导航修复 (Header/Toolbar) === */
+    /* === 界面元素隐藏与手机端导航修复 === */
 
     /* 1. 恢复顶部占位，防止内容被遮挡 */
     [data-testid="stDecoration"] { 
@@ -98,7 +98,7 @@ st.markdown("""
         border-bottom: 1px solid rgba(0,0,0,0.05);
     }
 
-    /* 3. 强制显示侧边栏开关按钮 (汉堡菜单/箭头) 并设为绿色 */
+    /* 3. 强制显示侧边栏开关按钮 (汉堡菜单) - 修复手机导航栏的关键 */
     [data-testid="collapsedControl"] { 
         display: block !important; 
         color: #00C090 !important; 
@@ -107,24 +107,116 @@ st.markdown("""
 
     /* 4. 针对手机端的特定修复 (屏幕宽度小于 768px) */
     @media (max-width: 768px) {
+        /* 确保侧边栏开关按钮在手机端可见 */
+        [data-testid="collapsedControl"] {
+            display: block !important;
+            color: #00C090 !important;
+            z-index: 99999 !important;
+            position: fixed !important;
+            top: 0.5rem !important;
+            left: 0.5rem !important;
+        }
+        
+        /* 手机端额外的侧边栏开关按钮（备用） */
         [data-testid="stSidebarCollapsedControl"] {
             display: block !important;
             color: #00C090 !important;
             z-index: 99999 !important;
         }
+        
         /* 稍微调整顶部边距，防止手机端内容顶到状态栏 */
         .block-container {
             padding-top: 3rem !important;
         }
+        
+        /* 手机端调整卡片内边距 */
+        .css-card {
+            padding: 16px;
+        }
+        
+        /* 手机端调整统计数字字体大小 */
+        .stat-value {
+            font-size: 1.8rem;
+        }
     }
 
-    /* 5. 仅隐藏右上角的 Deploy/Settings 菜单 (可选) */
+    /* 5. 仅隐藏右上角的 Deploy/Settings 菜单 */
     [data-testid="stToolbar"] { 
         visibility: hidden; 
-        right: 2rem;
+    }
+    
+    /* 6. 确保主内容区域不会遮挡导航按钮 */
+    .main .block-container {
+        padding-top: 3rem;
     }
 </style>
+
 """, unsafe_allow_html=True)
+
+# 在CSS之后添加JavaScript代码来确保手机端侧边栏可用
+components.html("""
+<script>
+// 检测是否为移动设备
+function isMobile() {
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+}
+
+// 页面加载完成后执行
+document.addEventListener('DOMContentLoaded', function() {
+    // 如果是移动设备，确保侧边栏开关按钮可见
+    if (isMobile()) {
+        const sidebarToggle = document.querySelector('[data-testid="collapsedControl"]');
+        if (sidebarToggle) {
+            sidebarToggle.style.display = 'block';
+            sidebarToggle.style.zIndex = '99999';
+        }
+    }
+
+    // 添加一个紧急侧边栏开关按钮（备用）
+    const emergencyToggle = document.createElement('div');
+    emergencyToggle.innerHTML = '☰';
+    emergencyToggle.style.cssText = `
+        position: fixed;
+        top: 10px;
+        left: 10px;
+        background: #00C090;
+        color: white;
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 24px;
+        z-index: 99999;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        display: none; /* 默认隐藏 */
+    `;
+
+    emergencyToggle.onclick = function() {
+        // 触发侧边栏切换
+        const event = new KeyboardEvent('keydown', {
+            key: 'Escape',
+            code: 'Escape',
+            keyCode: 27
+        });
+        document.dispatchEvent(event);
+    };
+
+    document.body.appendChild(emergencyToggle);
+
+    // 每5秒检查一次侧边栏开关按钮是否可见
+    setInterval(function() {
+        const originalToggle = document.querySelector('[data-testid="collapsedControl"]');
+        if (!originalToggle || window.getComputedStyle(originalToggle).display === 'none') {
+            emergencyToggle.style.display = 'flex';
+        } else {
+            emergencyToggle.style.display = 'none';
+        }
+    }, 5000);
+});
+</script>
+""", height=0)
 
 # ==============================================================================
 # 2. 数据库连接与配置
