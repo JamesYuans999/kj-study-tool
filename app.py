@@ -19,6 +19,7 @@ import uuid
 import re
 import gc
 import hashlib
+import math
 
 # ==============================================================================
 # 1. 全局配置与 CSS (紧急修复版：恢复原生交互)
@@ -1799,7 +1800,15 @@ elif menu == "🎓 AI 课堂 (讲义)":
                     st.metric("🗺️ 知识点", "--")
             with c_p3:
                 CHUNK_SIZE = 3500
-                rem_steps = max(0, (total_len - curr_pos) // (CHUNK_SIZE - 200))
+                step_len = CHUNK_SIZE - 200  # 实际每一步推进的距离
+                remaining_chars = max(0, total_len - curr_pos)
+
+                # 🟢 优化：使用向上取整，哪怕只剩 100 字也算 1 步
+                if remaining_chars > 0:
+                    rem_steps = math.ceil(remaining_chars / step_len)
+                else:
+                    rem_steps = 0
+
                 st.metric("⏳ 预计剩余步数", f"约 {rem_steps} 步")
 
             # --- 4. 主控区域 (双栏布局) ---
