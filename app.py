@@ -82,11 +82,42 @@ st.markdown("""
     .success-box { padding: 15px; background: #E8F5E9; border-radius: 10px; color: #2E7D32; border: 1px solid #C8E6C9; margin-bottom: 10px;}
     .warn-box { padding: 15px; background: #FFF8E1; border-radius: 10px; color: #F57F17; border: 1px solid #FFE082; margin-bottom: 10px;}
 
-    /* === 界面元素隐藏 (Header/Toolbar) === */
-    [data-testid="stDecoration"] { display: none; }
-    [data-testid="stHeader"] { background-color: transparent; z-index: 1; }
-    [data-testid="collapsedControl"] { display: block !important; color: #00C090 !important; z-index: 9999; }
-    [data-testid="stToolbar"] { visibility: hidden; }
+/* === 界面元素隐藏 (Header/Toolbar) - 手机端修复版 === */
+    
+    /* 1. 恢复顶部彩条，保留高度，防止按钮被遮挡 */
+    [data-testid="stDecoration"] { 
+        display: block !important; 
+        background-image: none; /* 去掉彩虹色，改为纯白或透明，保持占位 */
+        background-color: transparent;
+    }
+
+    /* 2. 确保 Header 可见且在最上层 */
+    [data-testid="stHeader"] { 
+        background-color: rgba(255, 255, 255, 0.95); /* 手机端最好有背景色，防止内容透上来干扰点击 */
+        z-index: 99999 !important; /* 强制置顶 */
+    }
+
+    /* 3. 强制显示侧边栏开关按钮 (汉堡菜单/箭头) */
+    [data-testid="collapsedControl"] { 
+        display: block !important; 
+        color: #00C090 !important; /* 绿色按钮 */
+        z-index: 99999 !important;
+    }
+    
+    /* 4. 针对手机端的特定修复 (屏幕宽度小于 768px) */
+    @media (max-width: 768px) {
+        [data-testid="stSidebarCollapsedControl"] {
+            display: block !important;
+            color: #00C090 !important;
+            z-index: 99999 !important;
+        }
+    }
+
+    /* 5. 仅隐藏右上角的 Deploy/Settings 菜单，不隐藏导航栏 */
+    [data-testid="stToolbar"] { 
+        visibility: hidden; 
+        right: 2rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -715,6 +746,78 @@ def extract_docx(file):
         doc = docx.Document(file)
         return "\n".join([p.text for p in doc.paragraphs])
     except: return ""
+
+
+# --- 🎓 AI 课堂专用辅助函数 (修复版) ---
+
+@st.cache_data(show_spinner=False)
+def get_cached_outline_v2(chapter_id, text_content, uid):
+    """
+    [修复] 用户隔离的大纲缓存，防止多用户串台
+    """
+    # 截取首尾中三段作为摘要，减少 Token 消耗
+    summary_context = text_content[:3000] + "\n...\n" + text_content[
+        len(text_content) // 2: len(text_content) // 2 + 2000]
+
+    prompt = f"""
+    【任务】快速扫描教材，列出本章 5-8 个核心知识点标题。
+    【教材片段】{summary_context}
+    【格式】请返回纯 JSON 字符串数组，例如：["总论", "存货的初始计量", "期末计量"]
+    【注意】标题要简洁，不要带序号。
+    """
+    try:
+        # 这里复用全局定义的 call_ai_json
+        res = call_ai_json(prompt)
+        if isinstance(res, list) and len(res) > 0:
+            return res
+        return ["本章概览", "核心考点", "实务案例", "章节总结"]  # 兜底
+    except:
+        return ["本章概览", "核心考点", "实务案例", "章节总结"]
+
+
+def check_outline_coverage_v2(outline, draft_text):
+    """
+    [修复] 更精准的覆盖率检测 (支持 Markdown 标题识别)
+    """
+    if not outline: return []
+    coverage = []
+    draft_lower = draft_text.lower()
+
+    for point in outline:
+        pt_lower = point.lower()
+
+        # 策略1: 显式标题检测 (## 标题)
+        is_header = f"## {point}" in draft_text or f"### {point}" in draft_text or f"#### {point}" in draft_text
+
+        # 策略2: 关键词存在且周围有足够文本
+        idx = draft_lower.find(pt_lower)
+        has_context = False
+        if idx != -1:
+            # 检查关键词后是否有至少 50 个字符的内容
+            context_chunk = draft_text[idx + len(point): idx + len(point) + 100]
+            if len(context_chunk.strip()) > 30:
+                has_context = True
+
+        is_covered = is_header or has_context
+        coverage.append({"title": point, "covered": is_covered})
+    return coverage
+
+
+def check_if_finished_v2(curr_pos, total_len, outline_coverage):
+    """
+    [修复] 综合完结检测
+    """
+    # 1. 物理进度 (达到 100%)
+    if curr_pos >= total_len: return True
+
+    # 2. 大纲覆盖率 (严格模式 > 90%)
+    if outline_coverage:
+        covered_count = sum(1 for item in outline_coverage if item['covered'])
+        total_pts = len(outline_coverage)
+        if total_pts > 0 and (covered_count / total_pts) >= 0.9:
+            return True
+
+    return False
 
 # ==============================================================================
 # 4. 侧边栏与导航 (修复版：统一菜单名称)
@@ -1540,11 +1643,11 @@ elif menu == "📂 智能拆书 & 资料":
                         with c_op2: st.caption(f"P{chap['start_page']} - P{chap['end_page']}")
 
 # =========================================================
-# 🎓 AI 课堂 (讲义) - 最终修复版 (含大纲缓存+防空白+多维进度)
+# 🎓 AI 课堂 (讲义) - 终极融合修复版
 # =========================================================
 elif menu == "🎓 AI 课堂 (讲义)":
     st.title("🎓 AI 深度课堂")
-    st.caption("分步生成长篇讲义，支持断点续写和深度问答。")
+    st.caption("分步生成长篇讲义，支持断点续写、深度问答与实时编辑。")
 
     # --- 1. 选书选章 ---
     subjects = get_subjects()
@@ -1596,313 +1699,247 @@ elif menu == "🎓 AI 课堂 (讲义)":
                 les_id = les['id']
                 with st.expander(f"📝 {les['title']}", expanded=False):
                     # 标题修改
-                    c_edit_title, c_save_title = st.columns([4, 1])
-                    with c_edit_title:
-                        new_title = st.text_input("标题", value=les['title'], key=f"title_in_{les_id}",
-                                                  label_visibility="collapsed")
-                    with c_save_title:
-                        if new_title != les['title']:
-                            if st.button("💾 保存", key=f"save_t_{les_id}"):
-                                supabase.table("ai_lessons").update({"title": new_title}).eq("id", les_id).execute()
-                                st.toast("标题已更新")
-                                time.sleep(1);
+                    c_edit_t, c_save_t = st.columns([4, 1])
+                    with c_edit_t:
+                        new_t = st.text_input("标题", value=les['title'], key=f"title_in_{les_id}",
+                                              label_visibility="collapsed")
+                    with c_save_t:
+                        if new_t != les['title']:
+                            if st.button("💾", key=f"save_t_{les_id}"):
+                                supabase.table("ai_lessons").update({"title": new_t}).eq("id", les_id).execute()
                                 st.rerun()
 
-                    st.markdown("---")
-
-                    # 工具栏
-                    c_tts, c_del = st.columns([1, 1])
+                    # 快捷工具栏
+                    c_tts, c_del, c_export = st.columns([1, 1, 4])
                     with c_tts:
-                        audio_key = f"audio_{les_id}"
-                        if st.button("🎧 生成语音 (Edge-TTS)", key=f"btn_tts_{les_id}"):
-                            with st.spinner("🎙️ 正在合成..."):
-                                mp3_path = None
-                                try:
-                                    clean_text = les['content'][:4000]
-                                    # ✅ 修复点：直接调用同步封装函数，不加 asyncio.run
-                                    mp3_path = generate_audio_file(clean_text)
-                                    with open(mp3_path, "rb") as f:
-                                        st.session_state[audio_key] = f.read()
-                                except Exception as e:
-                                    st.error(f"失败: {e}")
-                                finally:
-                                    if mp3_path and os.path.exists(mp3_path):
-                                        try:
-                                            os.remove(mp3_path)
-                                        except:
-                                            pass
-
-                        if audio_key in st.session_state:
-                            st.audio(st.session_state[audio_key], format="audio/mp3")
-
+                        if st.button("🎧 朗读", key=f"tts_{les_id}"):
+                            st.toast("正在生成语音...")
+                            mp3 = generate_audio_file(les['content'][:3000])  # 限制长度防止超时
+                            if mp3: st.audio(mp3)
                     with c_del:
-                        if st.button("🗑️ 删除讲义", key=f"del_les_{les_id}"):
+                        if st.button("🗑️ 删除", key=f"del_{les_id}"):
                             supabase.table("ai_lessons").delete().eq("id", les_id).execute()
-                            st.toast("已删除");
-                            time.sleep(1);
                             st.rerun()
 
-                    st.divider()
+                    st.markdown("---")
                     st.markdown(les['content'])
 
-                    # 问答区
-                    st.markdown("### 🙋‍♂️ 针对本讲义提问")
-                    chat_history = les.get('chat_history') or []
-                    for msg in chat_history:
-                        with st.chat_message("user" if msg['role'] == "user" else "ai"):
-                            st.markdown(msg['content'])
+                    # 简单问答
+                    st.divider()
+                    st.caption("💬 对本讲义提问")
 
-                    q_input = st.chat_input(f"问问 AI (ID:{les_id})", key=f"chat_in_{les_id}")
-                    if q_input:
-                        chat_history.append({"role": "user", "content": q_input})
-                        context_prompt = f"【讲义内容】\n{les['content'][:10000]}\n\n【用户提问】{q_input}"
-                        ai_reply = call_ai_universal(context_prompt, history=chat_history[:-1])
-                        chat_history.append({"role": "model", "content": ai_reply})
-                        supabase.table("ai_lessons").update({"chat_history": chat_history}).eq("id", les_id).execute()
+                    # 聊天历史容器
+                    if f"chat_{les_id}" not in st.session_state:
+                        st.session_state[f"chat_{les_id}"] = les.get('chat_history') or []
+
+                    for msg in st.session_state[f"chat_{les_id}"]:
+                        with st.chat_message(msg['role']): st.write(msg['content'])
+
+                    q_in = st.chat_input(f"基于本讲义提问...", key=f"in_{les_id}")
+                    if q_in:
+                        history = st.session_state[f"chat_{les_id}"]
+                        history.append({"role": "user", "content": q_in})
+
+                        prompt = f"【讲义内容】\n{les['content'][:10000]}\n\n【用户问题】{q_in}"
+                        ans = call_ai_universal(prompt)
+
+                        history.append({"role": "assistant", "content": ans})
+
+                        # 更新数据库
+                        supabase.table("ai_lessons").update({"chat_history": history}).eq("id", les_id).execute()
                         st.rerun()
 
     # ==========================================
-    # Tab 2: 分步生成工作台 (DeepSeek 终极修复版)
+    # Tab 2: 分步生成工作台 (UI 同步修复版)
     # ==========================================
     with tab_gen:
-        # --- 1. 读取教材 ---
+        # 1. 准备教材数据
         mats = supabase.table("materials").select("content").eq("chapter_id", cid).execute().data
-
         if not mats:
             st.warning("⚠️ 本章节尚未上传教材资料，请先去【智能拆书】上传。")
         else:
             full_text = "\n".join([m['content'] for m in mats])
             total_len = len(full_text)
 
-            # 常量定义
-            CHUNK_SIZE = 3500
-            OVERLAP = 200
+            # --- 核心状态管理 (Unique Keys) ---
+            # 使用章节ID+用户ID作为唯一键，防止切换章节时内容串台
+            DRAFT_KEY = f"draft_content_{cid}_{user_id}"
+            CURSOR_KEY = f"char_cursor_{cid}_{user_id}"
+            OUTLINE_KEY = f"outline_{cid}_{user_id}"
+            EDITOR_KEY = f"editor_widget_{cid}"  # 控件专用 Key
 
-            # 初始化状态
-            if 'draft_content' not in st.session_state:
-                st.session_state.draft_content = ""
-            if 'char_cursor' not in st.session_state:
-                st.session_state.char_cursor = 0
-            if 'chapter_outline' not in st.session_state:
-                st.session_state.chapter_outline = []
+            # 初始化
+            if DRAFT_KEY not in st.session_state: st.session_state[DRAFT_KEY] = ""
+            if CURSOR_KEY not in st.session_state: st.session_state[CURSOR_KEY] = 0
+            if OUTLINE_KEY not in st.session_state: st.session_state[OUTLINE_KEY] = []
 
-
-            # --- 🛠️ 缓存大纲函数 (省 Token) ---
-            @st.cache_data(show_spinner=False)
-            def get_cached_outline(chapter_id, text_content):
-                summary_context = text_content[:3000] + "\n...\n" + text_content[
-                    len(text_content) // 2: len(text_content) // 2 + 2000]
-                prompt = f"""
-                【任务】快速扫描教材，列出本章 5-8 个核心知识点标题。
-                【教材片段】{summary_context}
-                【格式】请返回纯 JSON 字符串数组，例如：["总论", "存货的初始计量", "期末计量"]
-                """
-                return call_ai_json(prompt)
-
-
-            # --- 2. 智能大纲逻辑 ---
-            if not st.session_state.chapter_outline and total_len > 0:
-                with st.expander("✨ 智能大纲 (点击生成，已支持缓存省流)", expanded=True):
-                    # 尝试自动加载缓存
-                    try:
-                        cached_res = get_cached_outline(cid, full_text)
-                        if cached_res and isinstance(cached_res, list):
-                            st.session_state.chapter_outline = cached_res
-                    except:
-                        pass
-
-                    if not st.session_state.chapter_outline:
-                        st.info("💡 首次分析需要消耗 Token，后续将自动读取缓存。")
-                        if st.button("🔍 分析本章核心考点"):
-                            with st.spinner("AI 正在扫描全书..."):
-                                res = get_cached_outline(cid, full_text)
-                                if res and isinstance(res, list):
-                                    st.session_state.chapter_outline = res
-                                    st.rerun()
-
-            st.divider()
-
-            # --- 3. 进度面板 ---
-            curr_pos = st.session_state.char_cursor
-            char_progress = min(curr_pos / total_len, 1.0)
-
-            # 大纲覆盖率
-            outline_status = check_outline_coverage(st.session_state.chapter_outline, st.session_state.draft_content)
-            outline_covered_count = sum(1 for item in outline_status if item['covered'])
-
-            c_p1, c_p2, c_p3 = st.columns(3)
-            with c_p1:
-                st.metric("📖 阅读进度", f"{int(char_progress * 100)}%")
-                st.progress(char_progress)
-            with c_p2:
-                if st.session_state.chapter_outline:
-                    total_pts = len(outline_status)
-                    st.metric("🗺️ 知识点覆盖", f"{outline_covered_count}/{total_pts}")
-                    st.progress(outline_covered_count / total_pts if total_pts > 0 else 0)
-                else:
-                    st.metric("🗺️ 知识点", "未生成大纲")
-            with c_p3:
-                remaining_steps = max(0, (total_len - curr_pos) // (CHUNK_SIZE - OVERLAP))
-                st.metric("⏳ 预计剩余", f"约 {remaining_steps} 步")
-
-            # --- 4. 高级控制 ---
-            with st.expander("⚙️ 高级控制 (手动跳转/重置)", expanded=False):
-                new_cursor = st.slider("手动调整阅读位置", 0, total_len, curr_pos)
-                if new_cursor != curr_pos:
-                    st.session_state.char_cursor = new_cursor
-                    st.rerun()
-
-                if st.session_state.chapter_outline:
-                    jump_pt = st.selectbox("跳转到知识点", ["选择跳转目标..."] + st.session_state.chapter_outline)
-                    if jump_pt != "选择跳转目标...":
-                        idx = full_text.find(jump_pt)
-                        if idx != -1:
-                            st.session_state.char_cursor = max(0, idx - 500)
-                            st.success(f"已跳转到 '{jump_pt}' 附近")
-                            time.sleep(0.5);
+            # --- 2. 智能大纲 (带缓存) ---
+            if not st.session_state[OUTLINE_KEY]:
+                with st.expander("✨ 智能大纲 (点击生成)", expanded=True):
+                    st.info("💡 系统将扫描教材生成核心考点地图。")
+                    if st.button("🔍 分析本章考点"):
+                        with st.spinner("AI 正在构建知识地图..."):
+                            # 调用修复后的缓存函数
+                            res = get_cached_outline_v2(cid, full_text, user_id)
+                            st.session_state[OUTLINE_KEY] = res
                             st.rerun()
 
-                if st.button("🧹 重置所有进度", type="primary"):
-                    st.session_state.draft_content = ""
-                    st.session_state.char_cursor = 0
-                    if "real_draft_editor" in st.session_state:
-                        del st.session_state["real_draft_editor"]
-                    st.rerun()
+            # --- 3. 进度与可视化 ---
+            curr_pos = st.session_state[CURSOR_KEY]
+            outline_data = st.session_state[OUTLINE_KEY]
+            current_draft = st.session_state[DRAFT_KEY]
 
-            # --- 5. 左右分栏布局 ---
-            col_outline, col_main = st.columns([1, 3])
+            # 使用修复后的覆盖率检测函数
+            outline_status = check_outline_coverage_v2(outline_data, current_draft)
 
-            # 左侧：动态大纲
-            with col_outline:
+            # 顶部仪表盘
+            c_p1, c_p2, c_p3 = st.columns(3)
+            with c_p1:
+                prog = min(curr_pos / total_len, 1.0)
+                st.metric("📖 阅读进度", f"{int(prog * 100)}%")
+                st.progress(prog)
+            with c_p2:
                 if outline_status:
-                    st.markdown("#### 📌 知识地图")
+                    covered = sum(1 for x in outline_status if x['covered'])
+                    total_pts = len(outline_status)
+                    st.metric("🗺️ 知识点覆盖", f"{covered}/{total_pts}")
+                    st.progress(covered / total_pts if total_pts else 0)
+                else:
+                    st.metric("🗺️ 知识点", "--")
+            with c_p3:
+                CHUNK_SIZE = 3500
+                rem_steps = max(0, (total_len - curr_pos) // (CHUNK_SIZE - 200))
+                st.metric("⏳ 预计剩余步数", f"约 {rem_steps} 步")
+
+            # --- 4. 主控区域 (双栏) ---
+            col_left, col_right = st.columns([1, 3])
+
+            # 左侧：大纲导航
+            with col_left:
+                st.markdown("#### 📌 知识地图")
+                if outline_status:
                     for item in outline_status:
                         icon = "✅" if item['covered'] else "⭕"
-                        color = "green" if item['covered'] else "gray"
-                        st.markdown(f":{color}[{icon} {item['title']}]")
-                else:
-                    st.info("暂无大纲")
+                        st.markdown(f"{icon} **{item['title']}**")
 
-            # 右侧：生成主区域
-            with col_main:
-                # 样式配置
-                c_style, c_title = st.columns([1, 2])
-                with c_style:
+                    st.markdown("---")
+                    # 手动跳转控制
+                    if st.button("🧹 重置本章进度", help="清除所有已生成内容和进度"):
+                        st.session_state[DRAFT_KEY] = ""
+                        st.session_state[CURSOR_KEY] = 0
+                        st.rerun()
+                else:
+                    st.caption("暂无大纲")
+
+            # 右侧：生成与编辑
+            with col_right:
+                c_conf1, c_conf2 = st.columns([1, 2])
+                with c_conf1:
                     style = st.selectbox("授课风格", ["👶 小白通俗版", "🦁 考霸冲刺版", "⚖️ 法条深度版"],
                                          label_visibility="collapsed")
-                with c_title:
-                    input_title = st.text_input("标题", value=f"深度解析：{c_name}", label_visibility="collapsed")
-
-                st.caption("👇 生成内容区 (可手动修改)：")
+                with c_conf2:
+                    lesson_title = st.text_input("讲义标题", value=f"深度解析：{c_name}", label_visibility="collapsed")
 
 
-                # 定义同步函数
-                def sync_draft_content():
-                    st.session_state.draft_content = st.session_state.real_draft_editor
+                # === 🔥 关键修复：Text Area 双向绑定 ===
+
+                # 定义回调：当用户手动修改 Text Area 时，同步回 session_state
+                def sync_editor_change():
+                    st.session_state[DRAFT_KEY] = st.session_state[EDITOR_KEY]
 
 
-                # 渲染输入框 (使用 real_draft_editor Key)
+                # 渲染 Text Area
+                # value 取自 session_state[DRAFT_KEY]，key 设为 EDITOR_KEY
                 st.text_area(
-                    "Draft",
-                    value=st.session_state.draft_content,
-                    height=500,
-                    key="real_draft_editor",
-                    label_visibility="collapsed",
-                    on_change=sync_draft_content
+                    "讲义内容编辑区",
+                    value=st.session_state[DRAFT_KEY],
+                    height=550,
+                    key=EDITOR_KEY,
+                    on_change=sync_editor_change,  # 绑定回调
+                    label_visibility="collapsed"
                 )
 
-                # 核心生成逻辑
-                start_idx = st.session_state.char_cursor
+                # 生成控制逻辑
+                start_idx = st.session_state[CURSOR_KEY]
                 end_idx = min(start_idx + CHUNK_SIZE, total_len)
 
-                current_chunk_text = full_text[start_idx: end_idx]
-                context_text = st.session_state.draft_content[-800:] if len(st.session_state.draft_content) > 0 else ""
+                is_finished = check_if_finished_v2(start_idx, total_len, outline_status)
 
-                # 完结检测
-                is_finished = check_if_finished(curr_pos, total_len, outline_status)
+                col_act1, col_act2 = st.columns([2, 1])
 
-                c_gen, c_save = st.columns([2, 1])
-
-                with c_gen:
+                with col_act1:
                     if is_finished:
-                        st.success("🎉 本章内容已全部讲完！")
-                        if st.button("🎓 生成全篇总结", type="primary", use_container_width=True):
-                            prompt = f"【任务】为这份讲义写总结。\n【风格】{style}\n【末尾内容】...{st.session_state.draft_content[-1500:]}"
-                            with st.spinner("正在总结..."):
-                                res = call_ai_universal(prompt)
+                        st.success("🎉 本章内容已全部生成完毕！")
+                        if st.button("🎓 生成全篇总结 (Final)", type="primary", use_container_width=True):
+                            with st.spinner("正在撰写结语..."):
+                                summary_prompt = f"【任务】为这份讲义写一个激昂的总结。\n【内容末尾】{st.session_state[DRAFT_KEY][-1000:]}"
+                                res = call_ai_universal(summary_prompt)
                                 if res:
-                                    st.session_state.draft_content += "\n\n## 🏁 课程总结\n" + res
-                                    # 删除 Key 强制刷新
-                                    if "real_draft_editor" in st.session_state:
-                                        del st.session_state["real_draft_editor"]
+                                    st.session_state[DRAFT_KEY] += f"\n\n## 🏁 课程总结\n{res}"
                                     st.rerun()
                     else:
-                        # 动态按钮
-                        if start_idx == 0:
-                            btn_text = "🚀 开始生成 (第 1 部分)"
-                            prompt_intro = f"开始讲解《{c_name}》。先列出本章大纲，然后开始讲解。"
-                        else:
-                            pct = int(start_idx / total_len * 100)
-                            btn_text = f"➕ 继续生成 ({pct}% -> {int(end_idx / total_len * 100)}%)"
-                            prompt_intro = f"紧接上文，继续讲解《{c_name}》的后续内容。"
+                        # 动态按钮文本
+                        btn_txt = "🚀 开始生成 (第1部分)" if start_idx == 0 else "➕ 继续生成下一节"
 
-                        if st.button(btn_text, type="primary", use_container_width=True):
-                            with st.spinner(f"AI 正在研读教材..."):
-                                prompt = f"""
-                                【角色】金牌会计讲师。
-                                【风格】{style}
-                                【任务】{prompt_intro}
-                                【上文回顾】...{context_text}
-                                【当前教材片段】{current_chunk_text}
-                                【要求】详细讲解当前片段，遇案例通俗拆解。Markdown格式。
-                                """
+                        if st.button(btn_txt, type="primary", use_container_width=True):
+                            # 准备 Prompt
+                            chunk_text = full_text[start_idx:end_idx]
+                            context_text = st.session_state[DRAFT_KEY][-800:] if len(
+                                st.session_state[DRAFT_KEY]) > 0 else ""
+
+                            prompt = f"""
+                            【角色】金牌会计讲师
+                            【风格】{style}
+                            【任务】讲解教材片段。
+                            【当前教材】{chunk_text}
+                            【上文回顾】...{context_text}
+                            【要求】
+                            1. 使用 Markdown 格式，层级清晰 (##, ###)。
+                            2. 遇到晦涩概念必须举生活例子。
+                            3. 承接上文，不要重复开场白。
+                            """
+
+                            with st.spinner("AI 正在备课中..."):
                                 res = call_ai_universal(prompt)
-
                                 if res and "Error" not in res:
+                                    # 1. 更新内容状态
                                     sep = "\n\n---\n\n" if start_idx > 0 else ""
-                                    new_content = st.session_state.draft_content + sep + res
+                                    st.session_state[DRAFT_KEY] += sep + res
 
-                                    # 1. 更新数据
-                                    st.session_state.draft_content = new_content
+                                    # 2. 推进进度
+                                    # 预留 200 字重叠防止切断上下文
+                                    next_pos = max(end_idx - 200, start_idx + 100)
+                                    st.session_state[CURSOR_KEY] = min(next_pos, total_len)
 
-                                    # 2. 修复报错：使用删除 Key 的方式强制刷新
-                                    if "real_draft_editor" in st.session_state:
-                                        del st.session_state["real_draft_editor"]
-
-                                    # 3. 推进游标
-                                    min_advance = CHUNK_SIZE // 2
-                                    next_pos = max(end_idx - OVERLAP, start_idx + min_advance, curr_pos + 1)
-                                    st.session_state.char_cursor = min(next_pos, total_len)
-
+                                    # 3. 强制刷新页面，让 Text Area 重新读取 DRAFT_KEY 的新值
                                     st.rerun()
                                 else:
                                     st.error(f"生成失败: {res}")
 
-                with c_save:
+                with col_act2:
                     if st.button("💾 保存讲义", use_container_width=True):
-                        # 优先从控件读取最新值
-                        real_content = st.session_state.get("real_draft_editor", st.session_state.draft_content)
-                        current_len = len(real_content)
-
-                        if current_len < 5:
-                            st.error(f"内容太少 (检测到 {current_len} 字)")
+                        # 保存时再次确保同步最新的 Text Area 内容
+                        final_content = st.session_state[DRAFT_KEY]
+                        if len(final_content) < 10:
+                            st.error("内容过少，无法保存")
                         else:
                             try:
-                                st.session_state.draft_content = real_content
-                                exist = supabase.table("ai_lessons").select("id").eq("title", input_title).eq(
+                                # 检查是否覆盖
+                                exist = supabase.table("ai_lessons").select("id").eq("title", lesson_title).eq(
                                     "chapter_id", cid).execute().data
+
                                 if exist:
                                     supabase.table("ai_lessons").update({
-                                        "content": real_content, "ai_model": style
+                                        "content": final_content, "ai_model": style
                                     }).eq("id", exist[0]['id']).execute()
-                                    st.toast("✅ 已更新")
+                                    st.toast("✅ 讲义已更新")
                                 else:
                                     supabase.table("ai_lessons").insert({
                                         "user_id": user_id, "chapter_id": cid,
-                                        "title": input_title, "content": real_content, "ai_model": style
+                                        "title": lesson_title, "content": final_content, "ai_model": style
                                     }).execute()
                                     st.balloons()
-                                    st.toast("✅ 已保存")
+                                    st.success("🎉 新讲义已保存！请到【我的讲义本】查看。")
                             except Exception as e:
                                 st.error(f"保存失败: {e}")
 
