@@ -1573,6 +1573,7 @@ elif menu == "📂 智能拆书 & 资料":
             bid = book_map[sel_book_label]
             curr_book_info = next((b for b in books if b['id'] == bid), {})
 
+            # 书籍头部信息
             c_tit, c_act = st.columns([5, 1])
             with c_tit:
                 st.markdown(f"### 📘 {curr_book_info.get('title', '未知书籍')}")
@@ -1581,11 +1582,12 @@ elif menu == "📂 智能拆书 & 资料":
                     try:
                         supabase.table("books").delete().eq("id", bid).execute()
                         st.toast("书籍已删除")
-                        time.sleep(1);
+                        time.sleep(1)
                         st.rerun()
                     except:
                         st.error("删除失败")
 
+            # 书籍重命名/转科设置
             with st.expander("🔧 书籍设置 (修正科目 / 重命名)", expanded=False):
                 c_set1, c_set2, c_set3 = st.columns([2, 2, 1])
                 with c_set1:
@@ -1593,7 +1595,10 @@ elif menu == "📂 智能拆书 & 资料":
                 with c_set2:
                     all_subs = get_subjects()
                     all_sub_names = [s['name'] for s in all_subs]
-                    curr_sub_idx = all_sub_names.index(s_name) if s_name in all_sub_names else 0
+                    # 防止索引越界
+                    curr_sub_idx = 0
+                    if s_name in all_sub_names:
+                        curr_sub_idx = all_sub_names.index(s_name)
                     target_sub_name = st.selectbox("🔀 归属科目", all_sub_names, index=curr_sub_idx)
                 with c_set3:
                     st.write("");
@@ -1604,18 +1609,23 @@ elif menu == "📂 智能拆书 & 资料":
                             supabase.table("books").update({
                                 "title": new_title, "subject_id": target_sid
                             }).eq("id", bid).execute()
-                            st.success("✅ 更新成功！");
-                            time.sleep(1);
+                            st.success("✅ 更新成功！")
+                            time.sleep(1)
                             st.rerun()
                         except Exception as e:
                             st.error(f"修改失败: {e}")
 
             st.divider()
+
+            # === 章节列表与内容预览 ===
             chapters = get_chapters(bid)
             if not chapters:
-                st.info("本书暂无章节")
+                st.info("本书暂无章节，请去上方重新拆分或导入。")
             else:
+                st.write(f"📚 共找到 {len(chapters)} 个章节：")
+
                 for chap in chapters:
+                    # 统计数据查询
                     try:
                         q_cnt = supabase.table("question_bank").select("id", count="exact").eq("chapter_id", chap[
                             'id']).execute().count
@@ -1627,16 +1637,56 @@ elif menu == "📂 智能拆书 & 资料":
                     except:
                         m_cnt = 0
 
-                    with st.expander(f"📑 {chap['title']} (题库: {q_cnt} | 教材: {'✅' if m_cnt else '❌'})"):
-                        c_op1, c_op2 = st.columns([1, 5])
+                    # 章节卡片
+                    with st.expander(f"📑 {chap['title']} (题库: {q_cnt} | 教材片段: {m_cnt})"):
+                        # 操作栏
+                        c_op1, c_op2 = st.columns([1, 4])
                         with c_op1:
-                            if st.button("🗑️ 清空", key=f"del_c_{chap['id']}"):
+                            if st.button("🗑️ 清空数据", key=f"del_c_{chap['id']}",
+                                         help="删除该章节下的所有题目和教材内容"):
                                 supabase.table("materials").delete().eq("chapter_id", chap['id']).execute()
                                 supabase.table("question_bank").delete().eq("chapter_id", chap['id']).execute()
-                                st.toast("已清空");
-                                time.sleep(1);
+                                st.toast("已清空该章节数据")
+                                time.sleep(1)
                                 st.rerun()
-                        with c_op2: st.caption(f"P{chap['start_page']} - P{chap['end_page']}")
+                        with c_op2:
+                            st.caption(f"物理页码: P{chap['start_page']} - P{chap['end_page']}")
+
+                        st.divider()
+
+                        # === 🟢 新增功能：教材内容预览 ===
+                        # 使用 checkbox 实现懒加载，不点不开，节省流量
+                        if st.checkbox(f"👁️ 预览/检查教材完整性", key=f"view_mat_{chap['id']}"):
+                            with st.spinner("正在从云端拉取教材..."):
+                                try:
+                                    # 从 materials 表拉取 content
+                                    mats = supabase.table("materials").select("content, created_at").eq("chapter_id",
+                                                                                                        chap[
+                                                                                                            'id']).order(
+                                        "id").execute().data
+
+                                    if not mats:
+                                        st.warning("⚠️ 数据库中没有找到本章节的教材文本。请检查是否导入成功。")
+                                    else:
+                                        # 拼接所有片段
+                                        full_text = "\n\n".join([m['content'] for m in mats])
+                                        char_count = len(full_text)
+
+                                        # 数据统计
+                                        st.caption(f"📊 数据概览：共 {len(mats)} 个片段，累计 {char_count} 字。")
+
+                                        # 文本展示区 (只读)
+                                        st.text_area(
+                                            label="数据库原文快照",
+                                            value=full_text,
+                                            height=400,
+                                            disabled=True,  # 设为只读，防止用户以为在这里能改
+                                            key=f"txt_area_{chap['id']}"
+                                        )
+                                        st.info("💡 提示：此处仅供核对。如需修改内容，请前往“🛠️ 数据管理 & 补录”菜单。")
+
+                                except Exception as e:
+                                    st.error(f"读取失败: {e}")
 
 # =========================================================
 # 🎓 AI 课堂 (讲义) - V10.0 极简交互版 (一键补全+预览优先)
