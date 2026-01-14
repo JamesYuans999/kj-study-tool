@@ -1887,189 +1887,186 @@ elif menu == "🎓 AI 课堂 (讲义)":
                     st.caption("暂无大纲")
 
             # >>> 右侧：预览优先 + 编辑切换 <<<
-                    # >>> 右侧：预览优先 + 编辑切换 <<<
-                    with col_right:
-                        c_conf1, c_conf2 = st.columns([1, 2])
-                        with c_conf1:
-                            style = st.selectbox("授课风格",
-                                                 ["👶 小白通俗版 (趣味Emoji)", "🦁 考霸冲刺版 (干货)", "⚖️ 法条深度版"],
-                                                 label_visibility="collapsed")
-                        with c_conf2:
-                            lesson_title = st.text_input("讲义标题", value=f"深度解析：{c_name}",
-                                                         label_visibility="collapsed")
+            with col_right:
+                c_conf1, c_conf2 = st.columns([1, 2])
+                with c_conf1:
+                    style = st.selectbox("授课风格",
+                                         ["👶 小白通俗版 (趣味Emoji)", "🦁 考霸冲刺版 (干货)", "⚖️ 法条深度版"],
+                                         label_visibility="collapsed")
+                with c_conf2:
+                    lesson_title = st.text_input("讲义标题", value=f"深度解析：{c_name}", label_visibility="collapsed")
 
-                        st.markdown("### 📄 讲义预览")
+                st.markdown("### 📄 讲义预览")
 
-                        # --- 编辑模式切换逻辑 ---
-                        is_editing = st.session_state[EDIT_MODE_KEY]
+                # --- 编辑模式切换逻辑 ---
+                is_editing = st.session_state[EDIT_MODE_KEY]
 
-                        # 容器：头部工具栏
-                        c_tool_1, c_tool_2 = st.columns([5, 1])
-                        with c_tool_2:
-                            if not is_editing:
-                                if st.button("✏️ 编辑", key="btn_enter_edit", help="点击进入手动编辑模式"):
-                                    st.session_state[EDIT_MODE_KEY] = True
-                                    st.rerun()
-                            else:
-                                if st.button("✅ 完成", key="btn_exit_edit", type="primary"):
-                                    st.session_state[EDIT_MODE_KEY] = False
-                                    st.rerun()
+                # 容器：头部工具栏
+                c_tool_1, c_tool_2 = st.columns([5, 1])
+                with c_tool_2:
+                    if not is_editing:
+                        if st.button("✏️ 编辑", key="btn_enter_edit", help="点击进入手动编辑模式"):
+                            st.session_state[EDIT_MODE_KEY] = True
+                            st.rerun()
+                    else:
+                        if st.button("✅ 完成", key="btn_exit_edit", type="primary"):
+                            # 退出编辑模式时，内容已经在 on_change 里同步了，这里只需切换状态
+                            st.session_state[EDIT_MODE_KEY] = False
+                            st.rerun()
 
-                        # 容器：内容显示区
-                        content_container = st.container(border=True)
-                        with content_container:
-                            # 分支 A: 编辑模式
-                            if is_editing:
-                                def sync_editor_change():
-                                    st.session_state[DRAFT_KEY] = st.session_state[EDITOR_KEY]
+                # 容器：内容显示区
+                content_container = st.container(border=True)
+                with content_container:
+                    # 分支 A: 编辑模式
+                    if is_editing:
+                        # 定义同步回调
+                        def sync_editor_change():
+                            st.session_state[DRAFT_KEY] = st.session_state[EDITOR_KEY]
 
 
-                                st.text_area(
-                                    "编辑区域",
-                                    value=st.session_state[DRAFT_KEY],
-                                    height=600,
-                                    key=EDITOR_KEY,
-                                    on_change=sync_editor_change,
-                                    label_visibility="collapsed",
-                                    placeholder="AI 生成的内容将出现在这里..."
-                                )
-                                st.caption("💡 提示：修改内容会自动保存到草稿，点击右上角“完成”返回预览。")
+                        st.text_area(
+                            "编辑区域",
+                            value=st.session_state[DRAFT_KEY],
+                            height=600,
+                            key=EDITOR_KEY,
+                            on_change=sync_editor_change,
+                            label_visibility="collapsed",
+                            placeholder="AI 生成的内容将出现在这里..."
+                        )
+                        st.caption("💡 提示：修改内容会自动保存到草稿，点击右上角“完成”返回预览。")
 
-                            # 分支 B: 预览模式 (默认)
-                            else:
-                                if st.session_state[DRAFT_KEY]:
-                                    st.markdown(st.session_state[DRAFT_KEY], unsafe_allow_html=True)
-                                else:
-                                    st.info(
-                                        "👋 欢迎使用 AI 课堂！\n\n请点击下方的 **“🚀 开始生成”** 按钮，AI 将根据教材为您分段生成讲义。\n\n左侧若有 **红圈** (未覆盖知识点)，可点击 **“⚡ 一键补全”** 进行查漏补缺。")
+                    # 分支 B: 预览模式 (默认)
+                    else:
+                        if st.session_state[DRAFT_KEY]:
+                            st.markdown(st.session_state[DRAFT_KEY], unsafe_allow_html=True)
+                        else:
+                            st.info(
+                                "👋 欢迎使用 AI 课堂！\n\n请点击下方的 **“🚀 开始生成”** 按钮，AI 将根据教材为您分段生成讲义。\n\n左侧若有 **红圈** (未覆盖知识点)，可点击 **“⚡ 一键补全”** 进行查漏补缺。")
 
-                        # ========================================================
-                        # 🔴 关键修复：这里的代码已经从上面的 else 块中移出来了
-                        # 它现在属于 with col_right，无论有没有内容都会显示！
-                        # ========================================================
+                # --- 底部控制栏 (生成 & 保存) ---
+                start_idx = st.session_state[CURSOR_KEY]
+                end_idx = min(start_idx + CHUNK_SIZE, total_len)
 
-                        # --- 底部控制栏 (生成 & 保存 & 翻页) ---
-                        start_idx = st.session_state[CURSOR_KEY]
-                        end_idx = min(start_idx + CHUNK_SIZE, total_len)
+                # 判定逻辑：物理进度走完 OR (知识点全覆盖且不为空)
+                # 这样无论是“手动生成”还是“一键补全”，都能触发完成状态
+                is_all_covered = outline_status and all(item['covered'] for item in outline_status)
+                is_finished = (start_idx >= total_len) or is_all_covered
 
-                        # 判定逻辑：物理进度走完 OR (知识点全覆盖且不为空)
-                        is_all_covered = outline_status and all(item['covered'] for item in outline_status)
-                        is_finished = (start_idx >= total_len) or is_all_covered
+                st.divider()
 
-                        st.divider()
+                # 定义三栏布局：生成/结语 | 保存 | 下一章
+                b_col1, b_col2, b_col3 = st.columns([2, 1, 1])
 
-                        # 定义三栏布局：生成/结语 | 保存 | 下一章
-                        b_col1, b_col2, b_col3 = st.columns([2, 1, 1])
-
-                        # 1. 左侧：生成逻辑 / 结语
-                        with b_col1:
-                            if is_editing:
-                                st.warning("⚠️ 请先点击右上角“完成”退出编辑模式。")
-                            else:
-                                if is_finished:
-                                    st.success("🎉 本章内容已生成完毕！")
-                                    if st.button("🎓 生成结语 (Final)", type="primary", use_container_width=True):
-                                        with st.spinner("正在撰写结语..."):
-                                            summary_prompt = f"【任务】为这份讲义写一个激昂的总结，带上 Emoji (🚀,🏆)。\n【内容末尾】{st.session_state[DRAFT_KEY][-1000:]}"
-                                            res = call_ai_universal(summary_prompt)
-                                            if res:
-                                                updated_text = st.session_state[DRAFT_KEY] + f"\n\n## 🏁 课程总结\n{res}"
-                                                st.session_state[DRAFT_KEY] = updated_text
-                                                st.session_state[EDITOR_KEY] = updated_text
-                                                st.rerun()
-                                else:
-                                    # 正常的分段生成按钮
-                                    btn_txt = "🚀 开始生成 (第1部分)" if start_idx == 0 else "➕ 继续生成下一节"
-                                    if not st.session_state[GEN_LOCK_KEY]:
-                                        if st.button(btn_txt, type="primary", use_container_width=True):
-                                            st.session_state[GEN_LOCK_KEY] = True
-                                            try:
-                                                emoji_instruct = "大量使用 Emoji (💡,✨,💰,⚠️) 使得排版活泼有趣。" if "小白" in style else "适当使用图标强调重点。"
-                                                chunk_text = full_text[start_idx:end_idx]
-                                                context_text = st.session_state[DRAFT_KEY][-800:] if len(
-                                                    st.session_state[DRAFT_KEY]) > 0 else ""
-
-                                                prompt = f"""
-                                                        【角色】金牌会计讲师
-                                                        【风格】{style}
-                                                        【视觉要求】{emoji_instruct}
-                                                        【任务】讲解以下教材片段。
-                                                        【当前教材】{chunk_text}
-                                                        【上文回顾】...{context_text}
-                                                        【排版要求】
-                                                        1. 使用 Markdown 标题 (##, ###)。
-                                                        2. 重点概念加粗。
-                                                        3. **遇到难点必须举生活中的例子** (例如：买菜、谈恋爱、开公司)。
-                                                        """
-                                                with st.spinner("AI 正在备课中..."):
-                                                    res = call_ai_universal(prompt)
-                                                    if res and "Error" not in res:
-                                                        sep = "\n\n---\n\n" if start_idx > 0 else ""
-                                                        updated_full = st.session_state[DRAFT_KEY] + sep + res
-                                                        st.session_state[DRAFT_KEY] = updated_full
-                                                        st.session_state[EDITOR_KEY] = updated_full
-                                                        next_pos = max(end_idx - 200, start_idx + 100)
-                                                        st.session_state[CURSOR_KEY] = min(next_pos, total_len)
-                                                    else:
-                                                        st.error(f"生成失败: {res}")
-                                            finally:
-                                                st.session_state[GEN_LOCK_KEY] = False
-                                                st.rerun()
-                                    else:
-                                        st.info("🔄 正在生成中...")
-
-                        # 2. 中间：保存逻辑
-                        with b_col2:
-                            final_content = st.session_state[DRAFT_KEY]
-                            if st.session_state[OVERWRITE_KEY] is None:
-                                if st.button("💾 保存讲义", use_container_width=True):
-                                    if len(final_content) < 10:
-                                        st.warning("内容过少")
-                                    else:
-                                        exist = supabase.table("ai_lessons").select("id").eq("title",
-                                                                                             lesson_title).eq(
-                                            "chapter_id", cid).execute().data
-                                        if exist:
-                                            st.session_state[OVERWRITE_KEY] = exist[0]['id']
-                                            st.rerun()
-                                        else:
-                                            supabase.table("ai_lessons").insert({
-                                                "user_id": user_id, "chapter_id": cid,
-                                                "title": lesson_title, "content": final_content, "ai_model": style
-                                            }).execute()
-                                            st.balloons()
-                                            st.success("🎉 保存成功！")
-                            else:
-                                st.warning("⚠️ 文件已存在！")
-                                if st.button("覆盖保存", type="primary"):
-                                    target_id = st.session_state[OVERWRITE_KEY]
-                                    supabase.table("ai_lessons").update(
-                                        {"content": final_content, "ai_model": style}).eq("id", target_id).execute()
-                                    st.session_state[OVERWRITE_KEY] = None
-                                    st.toast("✅ 已覆盖")
-                                    time.sleep(1)
-                                    st.rerun()
-
-                        # 3. 右侧：👉 下一章
-                        with b_col3:
-                            if is_finished:
-                                all_chap_titles = list(c_map.keys())
-                                try:
-                                    curr_idx = all_chap_titles.index(c_name)
-                                except:
-                                    curr_idx = -1
-
-                                if curr_idx != -1 and curr_idx < len(all_chap_titles) - 1:
-                                    next_chap_title = all_chap_titles[curr_idx + 1]
-
-                                    st.write("")
-                                    if st.button(f"➡️ 下一章", help=f"自动跳转至：{next_chap_title}",
-                                                 use_container_width=True):
-                                        st.session_state["chap_selector"] = next_chap_title
+                # 1. 左侧：生成逻辑 / 结语
+                with b_col1:
+                    if is_editing:
+                        st.warning("⚠️ 请先点击右上角“完成”退出编辑模式。")
+                    else:
+                        if is_finished:
+                            st.success("🎉 本章内容已生成完毕！")
+                            if st.button("🎓 生成结语 (Final)", type="primary", use_container_width=True):
+                                with st.spinner("正在撰写结语..."):
+                                    summary_prompt = f"【任务】为这份讲义写一个激昂的总结，带上 Emoji (🚀,🏆)。\n【内容末尾】{st.session_state[DRAFT_KEY][-1000:]}"
+                                    res = call_ai_universal(summary_prompt)
+                                    if res:
+                                        updated_text = st.session_state[DRAFT_KEY] + f"\n\n## 🏁 课程总结\n{res}"
+                                        st.session_state[DRAFT_KEY] = updated_text
+                                        st.session_state[EDITOR_KEY] = updated_text
                                         st.rerun()
-                                else:
-                                    st.info("🏁 已是最后一章")
+                        else:
+                            # 正常的分段生成按钮
+                            btn_txt = "🚀 开始生成 (第1部分)" if start_idx == 0 else "➕ 继续生成下一节"
+                            if not st.session_state[GEN_LOCK_KEY]:
+                                if st.button(btn_txt, type="primary", use_container_width=True):
+                                    st.session_state[GEN_LOCK_KEY] = True
+                                    try:
+                                        emoji_instruct = "大量使用 Emoji (💡,✨,💰,⚠️) 使得排版活泼有趣。" if "小白" in style else "适当使用图标强调重点。"
+                                        chunk_text = full_text[start_idx:end_idx]
+                                        context_text = st.session_state[DRAFT_KEY][-800:] if len(
+                                            st.session_state[DRAFT_KEY]) > 0 else ""
 
+                                        prompt = f"""
+                                        【角色】金牌会计讲师
+                                        【风格】{style}
+                                        【视觉要求】{emoji_instruct}
+                                        【任务】讲解以下教材片段。
+                                        【当前教材】{chunk_text}
+                                        【上文回顾】...{context_text}
+                                        【排版要求】
+                                        1. 使用 Markdown 标题 (##, ###)。
+                                        2. 重点概念加粗。
+                                        3. **遇到难点必须举生活中的例子** (例如：买菜、谈恋爱、开公司)。
+                                        """
+                                        with st.spinner("AI 正在备课中..."):
+                                            res = call_ai_universal(prompt)
+                                            if res and "Error" not in res:
+                                                sep = "\n\n---\n\n" if start_idx > 0 else ""
+                                                updated_full = st.session_state[DRAFT_KEY] + sep + res
+                                                st.session_state[DRAFT_KEY] = updated_full
+                                                st.session_state[EDITOR_KEY] = updated_full
+                                                next_pos = max(end_idx - 200, start_idx + 100)
+                                                st.session_state[CURSOR_KEY] = min(next_pos, total_len)
+                                            else:
+                                                st.error(f"生成失败: {res}")
+                                    finally:
+                                        st.session_state[GEN_LOCK_KEY] = False
+                                        st.rerun()
+                            else:
+                                st.info("🔄 正在生成中...")
+
+                # 2. 中间：保存逻辑 (保持不变)
+                with b_col2:
+                    final_content = st.session_state[DRAFT_KEY]
+                    if st.session_state[OVERWRITE_KEY] is None:
+                        if st.button("💾 保存讲义", use_container_width=True):
+                            if len(final_content) < 10:
+                                st.warning("内容过少")
+                            else:
+                                exist = supabase.table("ai_lessons").select("id").eq("title", lesson_title).eq(
+                                    "chapter_id", cid).execute().data
+                                if exist:
+                                    st.session_state[OVERWRITE_KEY] = exist[0]['id']
+                                    st.rerun()
+                                else:
+                                    supabase.table("ai_lessons").insert({
+                                        "user_id": user_id, "chapter_id": cid,
+                                        "title": lesson_title, "content": final_content, "ai_model": style
+                                    }).execute()
+                                    st.balloons()
+                                    st.success("🎉 保存成功！")
+                    else:
+                        st.warning("⚠️ 文件已存在！")
+                        if st.button("覆盖保存", type="primary"):
+                            target_id = st.session_state[OVERWRITE_KEY]
+                            supabase.table("ai_lessons").update({"content": final_content, "ai_model": style}).eq("id",
+                                                                                                                  target_id).execute()
+                            st.session_state[OVERWRITE_KEY] = None
+                            st.toast("✅ 已覆盖")
+                            time.sleep(1)
+                            st.rerun()
+
+                # 3. 右侧：👉 下一章 (这就是你问的那个逻辑)
+                with b_col3:
+                    # 只有当 is_finished 为 True (进度满或补全完) 时，才显示此按钮
+                    if is_finished:
+                        # 查找下一章
+                        all_chap_titles = list(c_map.keys())  # c_map 是 {标题: ID}
+                        try:
+                            curr_idx = all_chap_titles.index(c_name)
+                        except:
+                            curr_idx = -1
+
+                        # 如果存在下一章
+                        if curr_idx != -1 and curr_idx < len(all_chap_titles) - 1:
+                            next_chap_title = all_chap_titles[curr_idx + 1]
+
+                            st.write("")  # 占位，让按钮对齐
+                            if st.button(f"➡️ 下一章", help=f"自动跳转至：{next_chap_title}", use_container_width=True):
+                                # 修改顶部 Selectbox 的 Key 值，实现跳转
+                                st.session_state["chap_selector"] = next_chap_title
+                                st.rerun()
+                        else:
+                            st.info("🏁 已是最后一章")
 # =========================================================
 # 📝 章节特训 (V6.3: 完整逻辑修复版 - 含数据库查询与主观题支持)
 # =========================================================
