@@ -25,75 +25,89 @@ import gc
 st.set_page_config(page_title="中级会计 AI 私教 Pro", page_icon="🥝", layout="wide", initial_sidebar_state="auto")
 
 st.markdown("""
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
 <style>
-    /* === 1. 顶部导航栏 (Header) 修复 === */
-    /* 让 Header 稍微透明一点，但保留背景，防止内容穿透 */
-    header[data-testid="stHeader"] {
-        background-color: rgba(255, 255, 255, 0.95) !important;
-        border-bottom: 1px solid #f0f0f0;
-        z-index: 100 !important; /* 保证层级正常 */
-    }
-
-    /* 隐藏顶部的彩虹装饰条 */
-    [data-testid="stDecoration"] {
-        display: none !important;
-    }
-
-    /* === 2. 侧边栏开关按钮 (汉堡菜单) === */
-    /* 针对新版 Streamlit 的 ID */
-    button[data-testid="stSidebarCollapsedControl"] {
-        color: #00C090 !important; /* 强制改成绿色 */
-        display: block !important;
-        font-weight: bold;
-        z-index: 101 !important; /* 比 Header 高一层，确保能点到 */
-    }
-
-    /* 针对旧版 Streamlit 的 ID (兼容性) */
-    [data-testid="collapsedControl"] {
-        color: #00C090 !important;
-        display: block !important;
-        z-index: 101 !important;
-    }
-
-    /* === 3. 手机端适配 (Max Width 768px) === */
+    /* =======================================
+       1. 手机端核心修复 (Max Width 768px)
+       ======================================= */
     @media (max-width: 768px) {
-        /* 调整顶部留白，防止内容被 Header 挡住 */
+        /* A. 侧边栏：强制变为浮层抽屉，背景纯白 */
+        section[data-testid="stSidebar"] {
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 85% !important; /* 宽度占屏幕 85% */
+            max-width: 320px !important;
+            height: 100vh !important;
+            z-index: 99999 !important; /* 极高层级，盖住内容 */
+            background-color: #ffffff !important;
+            box-shadow: 5px 0 15px rgba(0,0,0,0.1) !important;
+            transform: none !important; /* 防止动画偏移 */
+        }
+
+        /* B. 汉堡菜单按钮：核弹级置顶，确保永远可点 */
+        button[data-testid="stSidebarCollapsedControl"],
+        [data-testid="collapsedControl"] {
+            display: block !important;
+            z-index: 999999 !important; /* 比侧边栏还要高 */
+            position: fixed !important;
+            top: 10px !important;
+            left: 10px !important;
+            background: white !important; /* 给按钮加个白底，防止文字干扰 */
+            border-radius: 50% !important;
+            padding: 5px !important;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.1) !important;
+            color: #00C090 !important;
+        }
+
+        /* C. 主内容区域：防止被顶部 Header 遮挡 */
         .main .block-container {
-            padding-top: 4rem !important;
+            padding-top: 5rem !important; /* 给顶部留出足够空间 */
             padding-left: 1rem !important;
             padding-right: 1rem !important;
+            max-width: 100vw !important;
         }
 
-        /* 强制侧边栏在手机上占满宽度或适中 */
-        [data-testid="stSidebar"] {
-            width: 300px !important; 
-            max-width: 85vw !important;
+        /* D. 隐藏右上角的 Deploy/GitHub 菜单，防止手机误触 */
+        [data-testid="stToolbar"] {
+            display: none !important;
         }
     }
 
-    /* === 4. UI 美化 (保持之前的奶油风) === */
-    .stApp { background-color: #F9F9F0; font-family: 'Segoe UI', sans-serif; }
+    /* =======================================
+       2. 全局通用样式 (PC/Mobile)
+       ======================================= */
 
-    /* 侧边栏 */
-    [data-testid="stSidebar"] { background-color: #FFFFFF; border-right: 1px solid #eee; }
+    /* 顶部 Header：半透明毛玻璃，不挡内容 */
+    header[data-testid="stHeader"] {
+        background: rgba(255, 255, 255, 0.9) !important;
+        backdrop-filter: blur(4px);
+        border-bottom: 1px solid #f0f0f0;
+        z-index: 50 !important; /* 比侧边栏低 */
+        height: 60px !important;
+    }
 
-    /* 卡片 */
+    /* 隐藏彩虹条 */
+    [data-testid="stDecoration"] { display: none !important; }
+
+    /* 侧边栏背景色 (PC) */
+    section[data-testid="stSidebar"] {
+        background-color: #ffffff;
+        border-right: 1px solid #f0f0f0;
+    }
+
+    /* 你的卡片样式 */
+    .stApp { background-color: #F9F9F0; }
     .css-card {
         background: #fff; border-radius: 12px; padding: 20px;
         box-shadow: 0 2px 8px rgba(0,0,0,0.03); border: 1px solid #eee; margin-bottom: 15px;
     }
-
-    /* 按钮 */
-    .stButton>button {
-        background: #00C090; color: white; border: none; border-radius: 8px;
-        height: 45px; font-weight: 600; width: 100%;
-    }
-    .stButton>button:hover { background: #00a87e; color: white; }
-
-    /* 统计字体 */
     .stat-value { font-size: 2rem; font-weight: 800; color: #333; }
 
+    /* 按钮样式 */
+    .stButton>button {
+        background: #00C090; color: white; border: none; border-radius: 8px;
+        height: 45px; font-weight: 600;
+    }
 </style>
 """, unsafe_allow_html=True)
 
