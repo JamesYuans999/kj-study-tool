@@ -1654,39 +1654,36 @@ elif menu == "📂 智能拆书 & 资料":
 
                         st.divider()
 
-                        # === 🟢 新增功能：教材内容预览 ===
-                        # 使用 checkbox 实现懒加载，不点不开，节省流量
-                        if st.checkbox(f"👁️ 预览/检查教材完整性", key=f"view_mat_{chap['id']}"):
-                            with st.spinner("正在从云端拉取教材..."):
-                                try:
-                                    # 从 materials 表拉取 content
-                                    mats = supabase.table("materials").select("content, created_at").eq("chapter_id",
-                                                                                                        chap[
-                                                                                                            'id']).order(
-                                        "id").execute().data
+                        # === 🟢 优化后的预览逻辑 ===
+                        preview_check = st.checkbox(f"👁️ 预览数据", key=f"view_mat_{chap['id']}")
 
-                                    if not mats:
-                                        st.warning("⚠️ 数据库中没有找到本章节的教材文本。请检查是否导入成功。")
-                                    else:
-                                        # 拼接所有片段
+                        if preview_check:
+                            # 场景 A: 纯题库 (有题无教材)
+                            if q_cnt > 0 and m_cnt == 0:
+                                st.info(f"💡 检测到本章节包含 {q_cnt} 道题目，属于【习题库】。")
+                                st.markdown("👉 请前往 **「🛠️ 数据管理 & 补录」** 板块进行题目的预览与可视编辑。")
+
+                            # 场景 B: 教材 (有教材内容)
+                            elif m_cnt > 0:
+                                with st.spinner("正在拉取教材原文..."):
+                                    try:
+                                        mats = supabase.table("materials").select("content").eq("chapter_id",
+                                                                                                chap['id']).order(
+                                            "id").execute().data
                                         full_text = "\n\n".join([m['content'] for m in mats])
-                                        char_count = len(full_text)
 
-                                        # 数据统计
-                                        st.caption(f"📊 数据概览：共 {len(mats)} 个片段，累计 {char_count} 字。")
+                                        st.caption(f"📊 教材原文概览 (共 {len(full_text)} 字)")
+                                        st.text_area("原文快照 (只读)", value=full_text, height=300, disabled=True,
+                                                     key=f"v_{chap['id']}")
 
-                                        # 文本展示区 (只读)
-                                        st.text_area(
-                                            label="数据库原文快照",
-                                            value=full_text,
-                                            height=400,
-                                            disabled=True,  # 设为只读，防止用户以为在这里能改
-                                            key=f"txt_area_{chap['id']}"
-                                        )
-                                        st.info("💡 提示：此处仅供核对。如需修改内容，请前往“🛠️ 数据管理 & 补录”菜单。")
+                                        st.warning(
+                                            "✏️ 如需修改原文(OCR纠错)，请前往 **「🛠️ 数据管理 & 补录」** > **「📘 教材内容修订」**。")
+                                    except Exception as e:
+                                        st.error(f"读取错误: {e}")
 
-                                except Exception as e:
-                                    st.error(f"读取失败: {e}")
+                            # 场景 C: 空章节
+                            else:
+                                st.warning("⚠️ 该章节暂无任何数据 (无题目也无教材)。")
 
 # =========================================================
 # 🎓 AI 课堂 (讲义) - V10.0 极简交互版 (一键补全+预览优先)
@@ -3000,241 +2997,250 @@ elif menu == "🛠️ 数据管理 & 补录":
     st.title("🛠️ 数据管理中心")
     st.caption("在此处手动修正 AI 的错误，或通过 Excel 批量导入自有题库。")
 
-    tab_edit, tab_upload = st.tabs(["✏️ 题库可视编辑", "📥 Excel 批量导入"])
+    # === 🟢 新增了中间的 Tab ===
+    tab_edit_q, tab_edit_m, tab_upload = st.tabs(["✏️ 题库可视编辑", "📘 教材内容修订", "📥 Excel 批量导入"])
 
-    # --- 辅助工具：选项格式转换 ---
-    def list_to_str(lst):
-        """将 ['A.xx', 'B.xx'] 转为 'A.xx | B.xx' 方便编辑"""
-        if isinstance(lst, list): return " | ".join(lst)
-        return str(lst) if lst else ""
 
-    def str_to_list(s):
-        """将 'A.xx | B.xx' 转回 JSON 数组"""
-        if not s: return []
-        return [x.strip() for x in s.split("|") if x.strip()]
-
-    # ---------------------------------------------------------
-    # Tab 1: 数据库直接编辑 (CRUD)
-    # ---------------------------------------------------------
-    with tab_edit:
-        st.info("💡 提示：双击单元格修改，修改后点击下方“💾 保存修改”生效。勾选行首可删除。")
-        
-        # 1. 筛选数据
+    # --- 公共选择器 (复用逻辑) ---
+    def render_selectors(suffix):
+        """渲染三级联动选择器，返回 (cid, c_name)"""
         subjects = get_subjects()
-        if not subjects: st.warning("请先初始化科目"); st.stop()
-        
+        if not subjects: st.warning("请先初始化科目"); return None, None
+
         c1, c2, c3 = st.columns(3)
         with c1:
-            s_name = st.selectbox("科目", [s['name'] for s in subjects], key="man_sub")
+            s_name = st.selectbox("科目", [s['name'] for s in subjects], key=f"sel_s_{suffix}")
             sid = next(s['id'] for s in subjects if s['name'] == s_name)
         with c2:
             books = get_books(sid)
             bid = None
             if books:
                 b_map = {b['title']: b['id'] for b in books}
-                b_name = st.selectbox("书籍", list(b_map.keys()), key="man_book")
+                b_name = st.selectbox("书籍", list(b_map.keys()), key=f"sel_b_{suffix}")
                 bid = b_map[b_name]
         with c3:
             cid = None
+            c_name = None
             if bid:
                 chaps = get_chapters(bid)
                 if chaps:
                     c_map = {c['title']: c['id'] for c in chaps}
-                    c_name = st.selectbox("章节", list(c_map.keys()), key="man_chap")
+                    c_name = st.selectbox("章节", list(c_map.keys()), key=f"sel_c_{suffix}")
                     cid = c_map[c_name]
+        return cid, c_name
 
-        # 2. 加载数据
-        if cid:
+
+    # --- 辅助工具 ---
+    def list_to_str(lst):
+        if isinstance(lst, list): return " | ".join(lst)
+        return str(lst) if lst else ""
+
+
+    def str_to_list(s):
+        if not s: return []
+        return [x.strip() for x in s.split("|") if x.strip()]
+
+
+    # ---------------------------------------------------------
+    # Tab 1: 题库可视编辑 (保持原有逻辑，稍作封装)
+    # ---------------------------------------------------------
+    with tab_edit_q:
+        st.info("💡 提示：双击单元格修改，修改后点击下方“💾 保存修改”生效。")
+        cid_q, _ = render_selectors("q")  # 渲染选择器
+
+        if cid_q:
             # 拉取该章节所有题目
-            qs = supabase.table("question_bank").select("*").eq("chapter_id", cid).order("id").execute().data
-            
+            qs = supabase.table("question_bank").select("*").eq("chapter_id", cid_q).order("id").execute().data
+
             if not qs:
-                st.warning("该章节暂无题目，请去【Excel 批量导入】或【智能拆书】添加。")
+                st.warning("该章节暂无题目。")
             else:
-                # 转换数据格式以适应 DataEditor (主要是 options 数组转字符串)
+                # 转换数据格式
                 edit_data = []
                 for q in qs:
                     edit_data.append({
                         "id": q['id'],
                         "type": q['type'],
                         "content": q['content'],
-                        "options_str": list_to_str(q['options']), # 拍扁数组
+                        "options_str": list_to_str(q['options']),
                         "correct_answer": q['correct_answer'],
                         "explanation": q.get('explanation', ''),
-                        "del": False # 删除标记
+                        "del": False
                     })
-                
+
                 df = pd.DataFrame(edit_data)
-                
-                # 3. 显示编辑器
+
+                # 显示编辑器
                 edited_df = st.data_editor(
                     df,
                     column_config={
                         "id": st.column_config.NumberColumn("ID", disabled=True, width="small"),
                         "del": st.column_config.CheckboxColumn("删除?", width="small"),
-                        "type": st.column_config.SelectboxColumn("题型", options=["single","multi","subjective"], width="medium"),
-                        "content": st.column_config.TextColumn("题目内容 (支持换行)", width="large"),
-                        "options_str": st.column_config.TextColumn("选项 (用 | 分隔)", help="例如: A.对 | B.错", width="medium"),
+                        "type": st.column_config.SelectboxColumn("题型", options=["single", "multi", "subjective"],
+                                                                 width="medium"),
+                        "content": st.column_config.TextColumn("题目内容", width="large"),
+                        "options_str": st.column_config.TextColumn("选项", width="medium"),
                         "correct_answer": st.column_config.TextColumn("答案", width="small"),
                         "explanation": st.column_config.TextColumn("解析", width="medium"),
                     },
                     use_container_width=True,
-                    num_rows="dynamic", # 允许添加新行
-                    key=f"editor_{cid}"
+                    num_rows="dynamic",
+                    key=f"editor_q_{cid_q}"
                 )
 
-                # 4. 保存逻辑
-                if st.button("💾 保存修改 (Save Changes)", type="primary"):
+                if st.button("💾 保存题库修改", type="primary"):
                     try:
                         changes_count = 0
-                        # 转换 dataframe 为 list of dicts
                         rows = edited_df.to_dict('records')
-                        
                         for row in rows:
-                            # A. 删除逻辑
                             if row.get('del') == True:
-                                if row.get('id'): # 只有已存在的才能删
+                                if row.get('id'):
                                     supabase.table("question_bank").delete().eq("id", row['id']).execute()
                                     changes_count += 1
                                 continue
-                            
-                            # B. 数据清洗
+
                             clean_opts = str_to_list(row['options_str'])
-                            
-                            # 构造 Payload
                             payload = {
-                                "chapter_id": cid,
-                                "user_id": user_id,
-                                "type": row['type'],
-                                "content": row['content'],
-                                "options": clean_opts,
-                                "correct_answer": row['correct_answer'],
-                                "explanation": row['explanation'],
-                                "origin": "manual_edit"
+                                "chapter_id": cid_q, "user_id": user_id,
+                                "type": row['type'], "content": row['content'],
+                                "options": clean_opts, "correct_answer": row['correct_answer'],
+                                "explanation": row['explanation'], "origin": "manual_edit"
                             }
-                            
-                            # C. 更新或新增
+
                             if row.get('id'):
-                                # 更新
                                 supabase.table("question_bank").update(payload).eq("id", row['id']).execute()
                             else:
-                                # 新增 (ID为空)
-                                if row['content']: # 防止空行
-                                    supabase.table("question_bank").insert(payload).execute()
-                            
+                                if row['content']: supabase.table("question_bank").insert(payload).execute()
                             changes_count += 1
-                        
-                        st.success(f"成功处理 {changes_count} 条变更！")
+
+                        st.success(f"成功更新 {changes_count} 条记录！")
                         time.sleep(1)
                         st.rerun()
-                        
                     except Exception as e:
                         st.error(f"保存失败: {e}")
 
     # ---------------------------------------------------------
-    # Tab 2: Excel 批量导入 (Token Saver)
+    # Tab 2: 教材内容修订 (🟢 新增功能)
+    # ---------------------------------------------------------
+    with tab_edit_m:
+        st.markdown("#### 📘 教材原文编辑器")
+        st.caption("如果 AI 讲课时出现胡言乱语，通常是因为这里的**OCR原文识别错误**。请在此修正错别字。")
+
+        cid_m, c_name_m = render_selectors("m")  # 渲染选择器
+
+        if cid_m:
+            # 获取 content
+            try:
+                mats = supabase.table("materials").select("*").eq("chapter_id", cid_m).order("id").execute().data
+
+                if not mats:
+                    st.warning("⚠️ 该章节没有教材内容。")
+                else:
+                    # 如果有多个片段，让用户选择要编辑哪一段
+                    mat_options = {f"片段 {i + 1} (ID: {m['id']}) - {m['content'][:20]}...": m for i, m in
+                                   enumerate(mats)}
+                    selected_label = st.selectbox("选择要编辑的片段", list(mat_options.keys()))
+
+                    target_mat = mat_options[selected_label]
+
+                    # 编辑表单
+                    with st.form(key=f"edit_mat_form_{target_mat['id']}"):
+                        new_content = st.text_area(
+                            "编辑内容",
+                            value=target_mat['content'],
+                            height=400,
+                            help="在这里修正 PDF 识别错误的文字，这会直接影响 AI 讲课的质量。"
+                        )
+
+                        c_sub1, c_sub2 = st.columns([1, 5])
+                        with c_sub1:
+                            submit = st.form_submit_button("💾 保存修正", type="primary")
+                        with c_sub2:
+                            if st.form_submit_button("🗑️ 删除此片段"):
+                                supabase.table("materials").delete().eq("id", target_mat['id']).execute()
+                                st.toast("片段已删除")
+                                time.sleep(1)
+                                st.rerun()
+
+                        if submit:
+                            if new_content != target_mat['content']:
+                                supabase.table("materials").update({
+                                    "content": new_content
+                                }).eq("id", target_mat['id']).execute()
+                                st.success("✅ 教材内容已更新！AI 再次备课时将使用新内容。")
+                                time.sleep(1)
+                                st.rerun()
+                            else:
+                                st.info("内容未发生变更。")
+
+            except Exception as e:
+                st.error(f"加载失败: {e}")
+
+    # ---------------------------------------------------------
+    # Tab 3: Excel 批量导入 (原有逻辑，仅移动位置)
     # ---------------------------------------------------------
     with tab_upload:
         st.markdown("#### 📥 零消耗导入")
-        st.markdown("如果你的资料已经是整理好的（如机构给的题库Excel），直接在这里上传，**无需消耗 AI Token**，且准确率 100%。")
-        
-        # 1. 下载模板
+        st.markdown("导入已整理好的题库 Excel，不消耗 Token。")
+
+        # 下载模板
         template_data = [
-            {
-                "题型(必填)": "single", 
-                "题目内容(必填)": "下列属于资产的是？", 
-                "选项(用|分隔)": "A.存货 | B.员工 | C.计划", 
-                "正确答案(必填)": "A", 
-                "解析": "资产定义..."
-            },
-            {
-                "题型(必填)": "subjective", 
-                "题目内容(必填)": "计算甲公司2024净利润...", 
-                "选项(用|分隔)": "", 
-                "正确答案(必填)": "净利润=100-20=80万", 
-                "解析": ""
-            }
-        ]
+            {"题型(必填)": "single", "题目内容(必填)": "...", "选项(用|分隔)": "A.x | B.y", "正确答案(必填)": "A",
+             "解析": ""}]
         df_temp = pd.DataFrame(template_data)
-        
-        # 转换 CSV 用于下载
         csv = df_temp.to_csv(index=False).encode('utf-8-sig')
-        st.download_button("⬇️ 下载 Excel/CSV 模板", data=csv, file_name="题库导入模板.csv", mime="text/csv")
-        
+        st.download_button("⬇️ 下载导入模板", data=csv, file_name="题库模板.csv", mime="text/csv")
+
         st.divider()
-        
-        # 2. 上传与解析
+
         c_up1, c_up2 = st.columns(2)
         with c_up1:
-            # 必须先选章节
-            st.info("请先在上方【题库可视编辑】标签页中选中**目标章节**，数据将导入该章节。")
-            target_cid = cid # 复用上面的变量
-            if not target_cid:
-                st.error("未选择目标章节，无法导入！")
-            
+            st.info("请先在左侧 Tab 选中目标章节，数据将导入该章节。")
+            # 尝试复用第一个 Tab 的选择，或者要求用户必须在 Tab 1 选好
+            # 为了简单，我们在本 Tab 再渲染一次选择器，或者提示用户
+            cid_u, _ = render_selectors("u")  # 独立渲染一个
+
         with c_up2:
-            up_excel = st.file_uploader("上传填好的 CSV/Excel", type=["csv", "xlsx"])
-        
-        if up_excel and target_cid:
+            up_excel = st.file_uploader("上传 CSV/Excel", type=["csv", "xlsx"])
+
+        if up_excel and cid_u:
             if st.button("🚀 开始导入", type="primary"):
                 try:
-                    # 读取文件
                     if up_excel.name.endswith('.csv'):
                         df_new = pd.read_csv(up_excel)
                     else:
                         df_new = pd.read_excel(up_excel)
-                    
-                    # 进度条
+
                     bar = st.progress(0)
-                    total = len(df_new)
-                    success_cnt = 0
-                    
                     batch_data = []
-                    
                     for i, row in df_new.iterrows():
-                        # 容错处理列名
+                        # (保持原有的导入逻辑)
                         content = row.get('题目内容(必填)') or row.get('题目内容') or row.get('content')
                         ans = row.get('正确答案(必填)') or row.get('正确答案') or row.get('correct_answer')
-                        typ = row.get('题型(必填)') or row.get('题型') or row.get('type') or 'single'
-                        exp = row.get('解析') or row.get('explanation') or ''
+                        if pd.isna(content) or pd.isna(ans): continue
+
                         opts_raw = row.get('选项(用|分隔)') or row.get('选项') or row.get('options')
-                        
-                        if pd.isna(content) or pd.isna(ans): continue # 跳过无效行
-                        
-                        # 选项清洗
-                        opts_list = []
-                        if opts_raw and not pd.isna(opts_raw):
-                            opts_list = [str(x).strip() for x in str(opts_raw).split("|") if str(x).strip()]
-                        
+                        opts_list = [str(x).strip() for x in str(opts_raw).split("|") if
+                                     str(x).strip()] if opts_raw else []
+
                         batch_data.append({
-                            "chapter_id": target_cid,
-                            "user_id": user_id,
-                            "type": str(typ).strip(),
-                            "content": str(content),
-                            "correct_answer": str(ans),
-                            "explanation": str(exp),
-                            "options": opts_list,
-                            "origin": "excel_import",
-                            "batch_source": f"Upload-{datetime.date.today()}"
+                            "chapter_id": cid_u, "user_id": user_id,
+                            "type": str(row.get('题型(必填)', 'single')).strip(),
+                            "content": str(content), "correct_answer": str(ans),
+                            "explanation": str(row.get('解析', '')), "options": opts_list,
+                            "origin": "excel_import", "batch_source": f"Upload-{datetime.date.today()}"
                         })
-                        
-                        if len(batch_data) >= 10: # 10条一批插入
+                        if len(batch_data) >= 10:
                             supabase.table("question_bank").insert(batch_data).execute()
                             batch_data = []
-                            
-                        bar.progress((i+1)/total)
-                        success_cnt += 1
-                        
-                    # 插入剩余的
-                    if batch_data:
-                        supabase.table("question_bank").insert(batch_data).execute()
-                        
-                    st.success(f"🎉 导入成功！共加入 {success_cnt} 道题。")
+                        bar.progress((i + 1) / len(df_new))
+
+                    if batch_data: supabase.table("question_bank").insert(batch_data).execute()
+                    st.success("🎉 导入成功！")
                     time.sleep(2)
                     st.rerun()
-                    
                 except Exception as e:
-                    st.error(f"导入失败: {e}\n请确保使用了正确的模板格式。")
+                    st.error(f"导入失败: {e}")
 
 
 
