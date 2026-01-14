@@ -20,94 +20,94 @@ import re
 import gc
 
 # ==============================================================================
-# 1. 全局配置与 CSS (修正版：回归原生，修复点击失效)
+# 1. 全局配置与 CSS (紧急修复版：恢复原生交互)
 # ==============================================================================
 st.set_page_config(page_title="中级会计 AI 私教 Pro", page_icon="🥝", layout="wide", initial_sidebar_state="auto")
 
 st.markdown("""
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
 <style>
     /* =======================================
-       1. 手机端核心修复 (Max Width 768px)
+       1. 关键修复：恢复侧边栏原生行为
        ======================================= */
-    @media (max-width: 768px) {
-        /* A. 侧边栏：强制变为浮层抽屉，背景纯白 */
-        section[data-testid="stSidebar"] {
-            position: fixed !important;
-            top: 0 !important;
-            left: 0 !important;
-            width: 85% !important; /* 宽度占屏幕 85% */
-            max-width: 320px !important;
-            height: 100vh !important;
-            z-index: 99999 !important; /* 极高层级，盖住内容 */
-            background-color: #ffffff !important;
-            box-shadow: 5px 0 15px rgba(0,0,0,0.1) !important;
-            transform: none !important; /* 防止动画偏移 */
-        }
-
-        /* B. 汉堡菜单按钮：核弹级置顶，确保永远可点 */
-        button[data-testid="stSidebarCollapsedControl"],
-        [data-testid="collapsedControl"] {
-            display: block !important;
-            z-index: 999999 !important; /* 比侧边栏还要高 */
-            position: fixed !important;
-            top: 10px !important;
-            left: 10px !important;
-            background: white !important; /* 给按钮加个白底，防止文字干扰 */
-            border-radius: 50% !important;
-            padding: 5px !important;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.1) !important;
-            color: #00C090 !important;
-        }
-
-        /* C. 主内容区域：防止被顶部 Header 遮挡 */
-        .main .block-container {
-            padding-top: 5rem !important; /* 给顶部留出足够空间 */
-            padding-left: 1rem !important;
-            padding-right: 1rem !important;
-            max-width: 100vw !important;
-        }
-
-        /* D. 隐藏右上角的 Deploy/GitHub 菜单，防止手机误触 */
-        [data-testid="stToolbar"] {
-            display: none !important;
-        }
+    /* 绝对不要设置 position: fixed !important，否则关不掉 */
+    section[data-testid="stSidebar"] {
+        background-color: #ffffff;
+        border-right: 1px solid #f0f0f0;
+        z-index: 99998 !important; /* 仅保证比 Header 高，但不锁定位置 */
     }
 
     /* =======================================
-       2. 全局通用样式 (PC/Mobile)
+       2. 汉堡菜单按钮 (必须置顶)
        ======================================= */
+    /* 确保按钮在最上层，否则点不到 */
+    button[data-testid="stSidebarCollapsedControl"] {
+        display: block !important;
+        z-index: 999999 !important; /* 最高层级 */
+        color: #00C090 !important; /* 绿色图标 */
+        position: fixed; /* 按钮固定在左上角 */
+        top: 10px;
+        left: 10px;
+        background: rgba(255,255,255,0.8); /*稍微加点背景防混淆*/
+        border-radius: 50%;
+        width: 2.5rem;
+        height: 2.5rem;
+    }
 
-    /* 顶部 Header：半透明毛玻璃，不挡内容 */
+    /* 兼容旧版 ID */
+    [data-testid="collapsedControl"] {
+        display: block !important;
+        z-index: 999999 !important;
+        color: #00C090 !important;
+        position: fixed;
+        top: 10px;
+        left: 10px;
+    }
+
+    /* =======================================
+       3. 顶部 Header (防止遮挡)
+       ======================================= */
     header[data-testid="stHeader"] {
-        background: rgba(255, 255, 255, 0.9) !important;
-        backdrop-filter: blur(4px);
-        border-bottom: 1px solid #f0f0f0;
-        z-index: 50 !important; /* 比侧边栏低 */
-        height: 60px !important;
+        background: rgba(255, 255, 255, 0.95) !important;
+        z-index: 99 !important; /* 比侧边栏低 */
+        height: 3.75rem;
     }
 
     /* 隐藏彩虹条 */
     [data-testid="stDecoration"] { display: none !important; }
 
-    /* 侧边栏背景色 (PC) */
-    section[data-testid="stSidebar"] {
-        background-color: #ffffff;
-        border-right: 1px solid #f0f0f0;
+    /* =======================================
+       4. 手机端内容避让 (关键)
+       ======================================= */
+    @media (max-width: 768px) {
+        /* 强制给主内容区顶部加 padding，把内容“顶”下来 */
+        .main .block-container {
+            padding-top: 5rem !important; 
+            max-width: 100vw !important;
+        }
     }
 
-    /* 你的卡片样式 */
-    .stApp { background-color: #F9F9F0; }
+    /* =======================================
+       5. 视觉美化 (Bento Grid)
+       ======================================= */
+    .stApp { background-color: #F9F9F0; font-family: 'Segoe UI', sans-serif; }
+
+    /* 卡片 */
     .css-card {
         background: #fff; border-radius: 12px; padding: 20px;
         box-shadow: 0 2px 8px rgba(0,0,0,0.03); border: 1px solid #eee; margin-bottom: 15px;
     }
+
+    /* 统计数字 */
     .stat-value { font-size: 2rem; font-weight: 800; color: #333; }
 
-    /* 按钮样式 */
+    /* 按钮 */
     .stButton>button {
         background: #00C090; color: white; border: none; border-radius: 8px;
         height: 45px; font-weight: 600;
     }
+    .stButton>button:hover { background: #00a87e; color: white; }
+
 </style>
 """, unsafe_allow_html=True)
 
