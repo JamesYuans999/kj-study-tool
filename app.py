@@ -1944,20 +1944,25 @@ elif menu == "🎓 AI 课堂 (讲义)":
                                 "👋 欢迎使用 AI 课堂！\n\n请点击下方的 **“🚀 开始生成”** 按钮，AI 将根据教材为您分段生成讲义。\n\n左侧若有 **红圈** (未覆盖知识点)，可点击 **“⚡ 一键补全”** 进行查漏补缺。")
 
                 # --- 底部控制栏 (生成 & 保存) ---
+                # 1. 定义备份用的 Key (用于撤销功能)
+                BACKUP_DRAFT_KEY = f"backup_draft_{cid}_{user_id}"
+                BACKUP_CURSOR_KEY = f"backup_cursor_{cid}_{user_id}"
+                if BACKUP_DRAFT_KEY not in st.session_state:
+                    st.session_state[BACKUP_DRAFT_KEY] = None
+                    st.session_state[BACKUP_CURSOR_KEY] = 0
+
                 start_idx = st.session_state[CURSOR_KEY]
                 end_idx = min(start_idx + CHUNK_SIZE, total_len)
 
-                # 判定逻辑：物理进度走完 OR (知识点全覆盖且不为空)
-                # 这样无论是“手动生成”还是“一键补全”，都能触发完成状态
                 is_all_covered = outline_status and all(item['covered'] for item in outline_status)
                 is_finished = (start_idx >= total_len) or is_all_covered
 
                 st.divider()
 
-                # 定义三栏布局：生成/结语 | 保存 | 下一章
+                # 定义布局：生成控制(含撤销) | 保存 | 下一章
                 b_col1, b_col2, b_col3 = st.columns([2, 1, 1])
 
-                # 1. 左侧：生成逻辑 / 结语
+                # >>> 左侧：生成与撤销逻辑 <<<
                 with b_col1:
                     if is_editing:
                         st.warning("⚠️ 请先点击右上角“完成”退出编辑模式。")
@@ -1966,6 +1971,9 @@ elif menu == "🎓 AI 课堂 (讲义)":
                             st.success("🎉 本章内容已生成完毕！")
                             if st.button("🎓 生成结语 (Final)", type="primary", use_container_width=True):
                                 with st.spinner("正在撰写结语..."):
+                                    # 生成结语前也备份一下，万一结语写得不好呢
+                                    st.session_state[BACKUP_DRAFT_KEY] = st.session_state[DRAFT_KEY]
+
                                     summary_prompt = f"【任务】为这份讲义写一个激昂的总结，带上 Emoji (🚀,🏆)。\n【内容末尾】{st.session_state[DRAFT_KEY][-1000:]}"
                                     res = call_ai_universal(summary_prompt)
                                     if res:
@@ -1974,45 +1982,70 @@ elif menu == "🎓 AI 课堂 (讲义)":
                                         st.session_state[EDITOR_KEY] = updated_text
                                         st.rerun()
                         else:
-                            # 正常的分段生成按钮
-                            btn_txt = "🚀 开始生成 (第1部分)" if start_idx == 0 else "➕ 继续生成下一节"
-                            if not st.session_state[GEN_LOCK_KEY]:
-                                if st.button(btn_txt, type="primary", use_container_width=True):
-                                    st.session_state[GEN_LOCK_KEY] = True
-                                    try:
-                                        emoji_instruct = "大量使用 Emoji (💡,✨,💰,⚠️) 使得排版活泼有趣。" if "小白" in style else "适当使用图标强调重点。"
-                                        chunk_text = full_text[start_idx:end_idx]
-                                        context_text = st.session_state[DRAFT_KEY][-800:] if len(
-                                            st.session_state[DRAFT_KEY]) > 0 else ""
+                            # 使用嵌套列来实现“生成”和“撤销”并排
+                            gen_col, undo_col = st.columns([3, 2])
 
-                                        prompt = f"""
-                                        【角色】金牌会计讲师
-                                        【风格】{style}
-                                        【视觉要求】{emoji_instruct}
-                                        【任务】讲解以下教材片段。
-                                        【当前教材】{chunk_text}
-                                        【上文回顾】...{context_text}
-                                        【排版要求】
-                                        1. 使用 Markdown 标题 (##, ###)。
-                                        2. 重点概念加粗。
-                                        3. **遇到难点必须举生活中的例子** (例如：买菜、谈恋爱、开公司)。
-                                        """
-                                        with st.spinner("AI 正在备课中..."):
-                                            res = call_ai_universal(prompt)
-                                            if res and "Error" not in res:
-                                                sep = "\n\n---\n\n" if start_idx > 0 else ""
-                                                updated_full = st.session_state[DRAFT_KEY] + sep + res
-                                                st.session_state[DRAFT_KEY] = updated_full
-                                                st.session_state[EDITOR_KEY] = updated_full
-                                                next_pos = max(end_idx - 200, start_idx + 100)
-                                                st.session_state[CURSOR_KEY] = min(next_pos, total_len)
-                                            else:
-                                                st.error(f"生成失败: {res}")
-                                    finally:
-                                        st.session_state[GEN_LOCK_KEY] = False
+                            with gen_col:
+                                btn_txt = "🚀 开始生成" if start_idx == 0 else "➕ 继续生成下一节"
+                                if not st.session_state[GEN_LOCK_KEY]:
+                                    if st.button(btn_txt, type="primary", use_container_width=True):
+                                        st.session_state[GEN_LOCK_KEY] = True
+                                        try:
+                                            # === 🟢 关键步骤：生成前先备份当前状态 ===
+                                            st.session_state[BACKUP_DRAFT_KEY] = st.session_state[DRAFT_KEY]
+                                            st.session_state[BACKUP_CURSOR_KEY] = st.session_state[CURSOR_KEY]
+                                            # ======================================
+
+                                            emoji_instruct = "大量使用 Emoji (💡,✨,💰,⚠️) 使得排版活泼有趣。" if "小白" in style else "适当使用图标强调重点。"
+                                            chunk_text = full_text[start_idx:end_idx]
+                                            context_text = st.session_state[DRAFT_KEY][-800:] if len(
+                                                st.session_state[DRAFT_KEY]) > 0 else ""
+
+                                            prompt = f"""
+                                            【角色】金牌会计讲师
+                                            【风格】{style}
+                                            【视觉要求】{emoji_instruct}
+                                            【任务】讲解以下教材片段。
+                                            【当前教材】{chunk_text}
+                                            【上文回顾】...{context_text}
+                                            【排版要求】
+                                            1. 使用 Markdown 标题 (##, ###)。
+                                            2. 重点概念加粗。
+                                            3. **遇到难点必须举生活中的例子** (例如：买菜、谈恋爱、开公司)。
+                                            """
+                                            with st.spinner("AI 正在备课中..."):
+                                                res = call_ai_universal(prompt)
+                                                if res and "Error" not in res:
+                                                    sep = "\n\n---\n\n" if start_idx > 0 else ""
+                                                    updated_full = st.session_state[DRAFT_KEY] + sep + res
+                                                    st.session_state[DRAFT_KEY] = updated_full
+                                                    st.session_state[EDITOR_KEY] = updated_full
+                                                    next_pos = max(end_idx - 200, start_idx + 100)
+                                                    st.session_state[CURSOR_KEY] = min(next_pos, total_len)
+                                                else:
+                                                    st.error(f"生成失败: {res}")
+                                        finally:
+                                            st.session_state[GEN_LOCK_KEY] = False
+                                            st.rerun()
+                                else:
+                                    st.info("🔄 正在生成中...")
+
+                            # === 🟢 撤销按钮逻辑 ===
+                            with undo_col:
+                                # 只有当存在备份（即至少生成过一次）且当前不是初始状态时，才显示撤销
+                                if st.session_state[BACKUP_DRAFT_KEY] is not None and st.session_state[DRAFT_KEY] != \
+                                        st.session_state[BACKUP_DRAFT_KEY]:
+                                    if st.button("↩️ 撤销本次", help="不满意刚才生成的内容？点击撤销，然后重新生成。",
+                                                 use_container_width=True):
+                                        # 还原状态
+                                        st.session_state[DRAFT_KEY] = st.session_state[BACKUP_DRAFT_KEY]
+                                        st.session_state[EDITOR_KEY] = st.session_state[BACKUP_DRAFT_KEY]  # 别忘了同步控件
+                                        st.session_state[CURSOR_KEY] = st.session_state[BACKUP_CURSOR_KEY]
+                                        # 清空备份，防止连续撤销
+                                        st.session_state[BACKUP_DRAFT_KEY] = None
+                                        st.toast("已撤销，您可以重新生成了 🔄")
+                                        time.sleep(0.5)
                                         st.rerun()
-                            else:
-                                st.info("🔄 正在生成中...")
 
                 # 2. 中间：保存逻辑 (保持不变)
                 with b_col2:
@@ -2045,24 +2078,19 @@ elif menu == "🎓 AI 课堂 (讲义)":
                             time.sleep(1)
                             st.rerun()
 
-                # 3. 右侧：👉 下一章 (这就是你问的那个逻辑)
+                # 3. 右侧：👉 下一章
                 with b_col3:
-                    # 只有当 is_finished 为 True (进度满或补全完) 时，才显示此按钮
                     if is_finished:
-                        # 查找下一章
-                        all_chap_titles = list(c_map.keys())  # c_map 是 {标题: ID}
+                        all_chap_titles = list(c_map.keys())
                         try:
                             curr_idx = all_chap_titles.index(c_name)
                         except:
                             curr_idx = -1
 
-                        # 如果存在下一章
                         if curr_idx != -1 and curr_idx < len(all_chap_titles) - 1:
                             next_chap_title = all_chap_titles[curr_idx + 1]
-
-                            st.write("")  # 占位，让按钮对齐
+                            st.write("")
                             if st.button(f"➡️ 下一章", help=f"自动跳转至：{next_chap_title}", use_container_width=True):
-                                # 修改顶部 Selectbox 的 Key 值，实现跳转
                                 st.session_state["chap_selector"] = next_chap_title
                                 st.rerun()
                         else:
