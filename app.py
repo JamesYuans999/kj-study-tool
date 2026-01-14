@@ -82,28 +82,29 @@ st.markdown("""
     .success-box { padding: 15px; background: #E8F5E9; border-radius: 10px; color: #2E7D32; border: 1px solid #C8E6C9; margin-bottom: 10px;}
     .warn-box { padding: 15px; background: #FFF8E1; border-radius: 10px; color: #F57F17; border: 1px solid #FFE082; margin-bottom: 10px;}
 
-/* === 界面元素隐藏 (Header/Toolbar) - 手机端修复版 === */
-    
-    /* 1. 恢复顶部彩条，保留高度，防止按钮被遮挡 */
+    /* === 界面元素隐藏与手机端导航修复 (Header/Toolbar) === */
+
+    /* 1. 恢复顶部占位，防止内容被遮挡 */
     [data-testid="stDecoration"] { 
         display: block !important; 
-        background-image: none; /* 去掉彩虹色，改为纯白或透明，保持占位 */
+        background-image: none; 
         background-color: transparent;
     }
 
-    /* 2. 确保 Header 可见且在最上层 */
+    /* 2. 确保 Header 可见、背景半透明（防内容穿透）、层级最高 */
     [data-testid="stHeader"] { 
-        background-color: rgba(255, 255, 255, 0.95); /* 手机端最好有背景色，防止内容透上来干扰点击 */
-        z-index: 99999 !important; /* 强制置顶 */
+        background-color: rgba(249, 249, 240, 0.95); /* 与背景色一致的半透明 */
+        z-index: 99999 !important; 
+        border-bottom: 1px solid rgba(0,0,0,0.05);
     }
 
-    /* 3. 强制显示侧边栏开关按钮 (汉堡菜单/箭头) */
+    /* 3. 强制显示侧边栏开关按钮 (汉堡菜单/箭头) 并设为绿色 */
     [data-testid="collapsedControl"] { 
         display: block !important; 
-        color: #00C090 !important; /* 绿色按钮 */
+        color: #00C090 !important; 
         z-index: 99999 !important;
     }
-    
+
     /* 4. 针对手机端的特定修复 (屏幕宽度小于 768px) */
     @media (max-width: 768px) {
         [data-testid="stSidebarCollapsedControl"] {
@@ -111,9 +112,13 @@ st.markdown("""
             color: #00C090 !important;
             z-index: 99999 !important;
         }
+        /* 稍微调整顶部边距，防止手机端内容顶到状态栏 */
+        .block-container {
+            padding-top: 3rem !important;
+        }
     }
 
-    /* 5. 仅隐藏右上角的 Deploy/Settings 菜单，不隐藏导航栏 */
+    /* 5. 仅隐藏右上角的 Deploy/Settings 菜单 (可选) */
     [data-testid="stToolbar"] { 
         visibility: hidden; 
         right: 2rem;
