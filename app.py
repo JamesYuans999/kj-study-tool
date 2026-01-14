@@ -20,27 +20,108 @@ import re
 import gc
 
 # ==============================================================================
-# 1. 全局配置与“奶油绿便当盒”风格还原 (CSS)
+# 1. 全局配置与“奶油绿便当盒”风格还原 (CSS 终极修复版)
 # ==============================================================================
-st.set_page_config(page_title="中级会计 AI 私教 Pro (Ultimate)", page_icon="🥝", layout="wide")
+st.set_page_config(page_title="中级会计 AI 私教 Pro", page_icon="🥝", layout="wide")
 
 st.markdown("""
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
 <style>
-    /* === 基础设定：还原 V2 的暖色调奶油白背景 === */
+    /* =============================================
+       1. 核心导航栏修复 (针对手机端 Chrome)
+       ============================================= */
+
+    /* 强制显示侧边栏开关按钮 (汉堡菜单) */
+    [data-testid="collapsedControl"] {
+        display: block !important;
+        visibility: visible !important;
+        position: fixed !important; /* 强制固定 */
+        top: 10px !important;
+        left: 10px !important;
+        z-index: 999999 !important; /* 确保在最顶层 */
+        background-color: rgba(255, 255, 255, 0.8) !important; /*哪怕背景复杂也能看清*/
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        display: flex !important;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+
+    /* 修改按钮图标颜色为主题绿 */
+    [data-testid="collapsedControl"] svg {
+        fill: #00C090 !important;
+        color: #00C090 !important;
+        width: 24px !important;
+        height: 24px !important;
+    }
+
+    /* 顶部 Header 背景处理 - 防止遮挡内容但保持美观 */
+    [data-testid="stHeader"] {
+        background: rgba(249, 249, 240, 0.85) !important; /* 半透明背景 */
+        backdrop-filter: blur(10px); /* 毛玻璃效果 */
+        border-bottom: 1px solid rgba(0,0,0,0.05);
+        z-index: 99999 !important; /* 比内容高，但比按钮低(如果是同层级会导致遮挡，所以按钮要更高) */
+        height: 60px !important;
+    }
+
+    /* 隐藏顶部的彩虹条 decoration */
+    [data-testid="stDecoration"] {
+        display: none !important;
+    }
+
+    /* 隐藏右上角的 Streamlit 菜单 (Deploy/Settings) 保持界面清爽 */
+    [data-testid="stToolbar"] {
+        right: 1rem;
+        top: 0.5rem;
+        /* 如果你想完全隐藏，取消下面注释 */
+        /* display: none !important; */ 
+    }
+
+    /* =============================================
+       2. 移动端专属适配 (Max Width 768px)
+       ============================================= */
+    @media (max-width: 768px) {
+        /* 增加顶部内边距，防止内容被 Header 遮挡 */
+        .main .block-container {
+            padding-top: 5rem !important; 
+            padding-left: 1rem !important;
+            padding-right: 1rem !important;
+        }
+
+        /* 侧边栏宽度调整，防止在小手机上占满全屏 */
+        [data-testid="stSidebar"] {
+            min-width: 280px !important;
+            max-width: 80% !important;
+        }
+
+        /* 统计卡片字体缩小 */
+        .stat-value { font-size: 1.8rem !important; }
+
+        /* 按钮加大，方便手指点击 */
+        .stButton>button {
+            height: 55px !important;
+            font-size: 16px !important;
+        }
+    }
+
+    /* =============================================
+       3. 奶油绿 Bento 主题基础样式
+       ============================================= */
     .stApp {
         background-color: #F9F9F0;
         font-family: 'Segoe UI', 'Roboto', sans-serif;
     }
 
-    /* === 侧边栏：纯白卡片感 === */
+    /* 侧边栏美化 */
     [data-testid="stSidebar"] {
         background-color: #FFFFFF;
         border-right: 1px solid rgba(0,0,0,0.05);
         box-shadow: 4px 0 15px rgba(0,0,0,0.02);
     }
 
-    /* === 卡片：Bento Grid 风格 === */
+    /* 卡片风格 */
     .css-card {
         background-color: #FFFFFF;
         border-radius: 16px;
@@ -48,172 +129,122 @@ st.markdown("""
         margin-bottom: 20px;
         border: 1px solid #F0F0F0;
         box-shadow: 0 4px 6px rgba(0,0,0,0.02);
-        transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+        transition: all 0.3s ease;
         position: relative;
         overflow: hidden;
     }
     .css-card:hover {
-        transform: translateY(-4px);
+        transform: translateY(-2px);
         box-shadow: 0 12px 24px rgba(0, 192, 144, 0.15);
         border-color: #00C090;
     }
 
-    /* === 统计数字 === */
+    /* 统计文字 */
     .stat-title { font-size: 0.85rem; color: #888; text-transform: uppercase; letter-spacing: 1px; font-weight: 700; }
     .stat-value { font-size: 2.2rem; font-weight: 800; color: #2C3E50; letter-spacing: -1px; }
     .stat-icon { position: absolute; right: 20px; top: 20px; font-size: 2rem; color: rgba(0,192,144, 0.1); }
 
-    /* === 按钮美化 === */
+    /* 按钮美化 */
     .stButton>button {
         background: linear-gradient(135deg, #00C090 0%, #00a87e 100%);
         color: white; border: none; border-radius: 12px; height: 48px; font-weight: 600;
         box-shadow: 0 4px 10px rgba(0, 192, 144, 0.2); transition: all 0.3s ease; padding: 0 25px;
     }
     .stButton>button:hover {
-        transform: translateY(-2px); box-shadow: 0 6px 15px rgba(0, 192, 144, 0.4); filter: brightness(1.05); color: white;
+        transform: translateY(-2px); box-shadow: 0 6px 15px rgba(0, 192, 144, 0.4); 
+        filter: brightness(1.05); color: white !important;
     }
 
-    /* === 聊天与选项 === */
-    .option-item { background: #fff; border: 1px solid #f0f0f0; padding: 12px 15px; border-radius: 10px; margin-bottom: 8px; border-left: 4px solid #e0e0e0; color: #495057; }
-    .chat-user { background-color: #E3F2FD; padding: 12px 18px; border-radius: 15px 15px 0 15px; margin: 10px 0 10px auto; max-width: 85%; color: #1565C0; }
-    .chat-ai { background-color: #FFFFFF; padding: 12px 18px; border-radius: 15px 15px 15px 0; margin: 10px auto 10px 0; max-width: 85%; border-left: 4px solid #00C090; }
+    /* 聊天气泡 */
+    .chat-user { background-color: #E3F2FD; padding: 12px 18px; border-radius: 15px 15px 0 15px; margin: 10px 0 10px auto; max-width: 90%; color: #1565C0; }
+    .chat-ai { background-color: #FFFFFF; padding: 12px 18px; border-radius: 15px 15px 15px 0; margin: 10px auto 10px 0; max-width: 90%; border-left: 4px solid #00C090; }
 
-    /* === 成功/警告框 === */
+    /* 提示框 */
     .success-box { padding: 15px; background: #E8F5E9; border-radius: 10px; color: #2E7D32; border: 1px solid #C8E6C9; margin-bottom: 10px;}
     .warn-box { padding: 15px; background: #FFF8E1; border-radius: 10px; color: #F57F17; border: 1px solid #FFE082; margin-bottom: 10px;}
 
-    /* === 界面元素隐藏与手机端导航修复 === */
-
-    /* 1. 恢复顶部占位，防止内容被遮挡 */
-    [data-testid="stDecoration"] { 
-        display: block !important; 
-        background-image: none; 
-        background-color: transparent;
-    }
-
-    /* 2. 确保 Header 可见、背景半透明（防内容穿透）、层级最高 */
-    [data-testid="stHeader"] { 
-        background-color: rgba(249, 249, 240, 0.95); /* 与背景色一致的半透明 */
-        z-index: 99999 !important; 
-        border-bottom: 1px solid rgba(0,0,0,0.05);
-    }
-
-    /* 3. 强制显示侧边栏开关按钮 (汉堡菜单) - 修复手机导航栏的关键 */
-    [data-testid="collapsedControl"] { 
-        display: block !important; 
-        color: #00C090 !important; 
-        z-index: 99999 !important;
-    }
-
-    /* 4. 针对手机端的特定修复 (屏幕宽度小于 768px) */
-    @media (max-width: 768px) {
-        /* 确保侧边栏开关按钮在手机端可见 */
-        [data-testid="collapsedControl"] {
-            display: block !important;
-            color: #00C090 !important;
-            z-index: 99999 !important;
-            position: fixed !important;
-            top: 0.5rem !important;
-            left: 0.5rem !important;
-        }
-        
-        /* 手机端额外的侧边栏开关按钮（备用） */
-        [data-testid="stSidebarCollapsedControl"] {
-            display: block !important;
-            color: #00C090 !important;
-            z-index: 99999 !important;
-        }
-        
-        /* 稍微调整顶部边距，防止手机端内容顶到状态栏 */
-        .block-container {
-            padding-top: 3rem !important;
-        }
-        
-        /* 手机端调整卡片内边距 */
-        .css-card {
-            padding: 16px;
-        }
-        
-        /* 手机端调整统计数字字体大小 */
-        .stat-value {
-            font-size: 1.8rem;
-        }
-    }
-
-    /* 5. 仅隐藏右上角的 Deploy/Settings 菜单 */
-    [data-testid="stToolbar"] { 
-        visibility: hidden; 
-    }
-    
-    /* 6. 确保主内容区域不会遮挡导航按钮 */
-    .main .block-container {
-        padding-top: 3rem;
-    }
 </style>
-
 """, unsafe_allow_html=True)
 
-# 在CSS之后添加JavaScript代码来确保手机端侧边栏可用
+# ------------------------------------------------------------------
+# JavaScript 终极备用方案：手动创建一个悬浮按钮
+# ------------------------------------------------------------------
+# 只有当 CSS 依然无法显示原声按钮时，这个 JS 会在页面左上角强制画一个绿色的 "☰" 按钮
+# 点击它会模拟按下 'Escape' 或触发侧边栏展开
+# ------------------------------------------------------------------
 components.html("""
 <script>
-// 检测是否为移动设备
-function isMobile() {
-    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-}
-
-// 页面加载完成后执行
 document.addEventListener('DOMContentLoaded', function() {
-    // 如果是移动设备，确保侧边栏开关按钮可见
-    if (isMobile()) {
-        const sidebarToggle = document.querySelector('[data-testid="collapsedControl"]');
-        if (sidebarToggle) {
-            sidebarToggle.style.display = 'block';
-            sidebarToggle.style.zIndex = '99999';
+    // 1. 定义一个检查函数
+    function ensureSidebarToggle() {
+        // 尝试找到 Streamlit 原生按钮
+        const nativeBtn = window.parent.document.querySelector('[data-testid="collapsedControl"]');
+
+        // 如果原生按钮存在，强制给它样式（JS层面的双重保险）
+        if (nativeBtn) {
+            nativeBtn.style.display = 'flex';
+            nativeBtn.style.position = 'fixed';
+            nativeBtn.style.top = '10px';
+            nativeBtn.style.left = '10px';
+            nativeBtn.style.zIndex = '9999999';
+            nativeBtn.style.color = '#00C090';
+            return;
         }
+
+        // 2. 如果没找到原生按钮，创建一个自定义的“紧急按钮”
+        // 检查是否已经创建过
+        if (window.parent.document.getElementById('emergency-sidebar-toggle')) return;
+
+        const btn = document.createElement('div');
+        btn.id = 'emergency-sidebar-toggle';
+        btn.innerHTML = '☰';
+        btn.style.cssText = `
+            position: fixed;
+            top: 15px;
+            left: 15px;
+            width: 45px;
+            height: 45px;
+            background: #00C090;
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            font-weight: bold;
+            z-index: 9999999;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            cursor: pointer;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        `;
+
+        // 点击事件：模拟展开侧边栏
+        btn.onclick = function() {
+            // 方法A: 寻找 data-testid="stSidebar" 并修改样式 (较为Hack)
+            // 方法B: 模拟键盘事件 (大部分 Streamlit 版本支持按 > 展开)
+            try {
+                // 尝试找到原生按钮再点一次（有时候它是存在的只是透明了）
+                const hiddenBtn = window.parent.document.querySelector('[data-testid="collapsedControl"]');
+                if (hiddenBtn) {
+                    hiddenBtn.click();
+                } else {
+                    // 发送键盘指令
+                    const e = new KeyboardEvent('keydown', {bubbles: true, cancelable: true, key: '>', char: '>', shiftKey: false});
+                    window.parent.document.dispatchEvent(e);
+                }
+            } catch(e) {
+                console.error("Sidebar toggle failed", e);
+            }
+        };
+
+        window.parent.document.body.appendChild(btn);
     }
 
-    // 添加一个紧急侧边栏开关按钮（备用）
-    const emergencyToggle = document.createElement('div');
-    emergencyToggle.innerHTML = '☰';
-    emergencyToggle.style.cssText = `
-        position: fixed;
-        top: 10px;
-        left: 10px;
-        background: #00C090;
-        color: white;
-        width: 40px;
-        height: 40px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 24px;
-        z-index: 99999;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.2);
-        display: none; /* 默认隐藏 */
-    `;
-
-    emergencyToggle.onclick = function() {
-        // 触发侧边栏切换
-        const event = new KeyboardEvent('keydown', {
-            key: 'Escape',
-            code: 'Escape',
-            keyCode: 27
-        });
-        document.dispatchEvent(event);
-    };
-
-    document.body.appendChild(emergencyToggle);
-
-    // 每5秒检查一次侧边栏开关按钮是否可见
-    setInterval(function() {
-        const originalToggle = document.querySelector('[data-testid="collapsedControl"]');
-        if (!originalToggle || window.getComputedStyle(originalToggle).display === 'none') {
-            emergencyToggle.style.display = 'flex';
-        } else {
-            emergencyToggle.style.display = 'none';
-        }
-    }, 5000);
+    // 延迟执行，等待 Streamlit 渲染完成
+    setTimeout(ensureSidebarToggle, 1000);
+    setTimeout(ensureSidebarToggle, 3000);
+    setInterval(ensureSidebarToggle, 5000); // 周期性检查
 });
 </script>
 """, height=0)
