@@ -745,22 +745,27 @@ def extract_docx(file):
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
-def get_chapter_outline(chapter_id, text_content, uid):
+def get_cached_outline_v2(chapter_id, text_content, uid):
     """
     [V12.0 终极版] 大纲生成：数据库优先 -> 语义分块 -> Map-Reduce -> 写入数据库
+    (函数名已恢复为 get_cached_outline_v2 以防止 NameError)
     """
+    import hashlib
+    import json  # 确保导入json
+
     # 1. 优先查库 (Permanent Storage)
     try:
+        # 尝试从 chapters 表的 outline 字段读取
         db_res = supabase.table("chapters").select("outline").eq("id", chapter_id).execute()
         if db_res.data and db_res.data[0].get('outline'):
-            # 如果数据库里有，直接返回，秒开！
+            # 如果数据库里有且不为空，直接返回，秒开！
             return db_res.data[0]['outline']
     except Exception as e:
         print(f"DB Read Error: {e}")
 
     # 2. 如果数据库没有，开始 AI 生成 (Map-Reduce)
 
-    # 注入会计知识 Prompt (需求3 & 4)
+    # 注入会计知识 Prompt
     domain_knowledge = """
     【领域知识注入】
     1. 关注《企业会计准则》的最新变化（如收入、租赁、金融工具准则）。
@@ -768,8 +773,9 @@ def get_chapter_outline(chapter_id, text_content, uid):
     3. 能够识别会计分录的借贷逻辑，不要将分录拆散。
     """
 
-    # A. 语义分块
-    chunks = semantic_chunking(text_content, max_chunk_size=12000)  # 留点余量给 prompt
+    # A. 语义分块 (依赖前面的 semantic_chunking 函数)
+    # 如果提示 semantic_chunking 未定义，请确保你已经添加了我在“第一部分”提供的代码
+    chunks = semantic_chunking(text_content, max_chunk_size=12000)
 
     all_sub_points = []
 
@@ -796,7 +802,7 @@ def get_chapter_outline(chapter_id, text_content, uid):
     progress_text.empty()
 
     # C. Reduce 阶段 (汇总整理)
-    if not all_sub_points: return ["大纲生成失败"]
+    if not all_sub_points: return ["大纲生成失败", "请检查原文是否为空"]
 
     reduce_prompt = f"""
     【任务】作为资深会计讲师，请整理以下碎片化的知识点，生成一份逻辑严密的章节大纲。
@@ -819,6 +825,8 @@ def get_chapter_outline(chapter_id, text_content, uid):
         final_outline = all_sub_points[:8]  # 兜底
 
     # 3. 存入数据库 (Persistence)
+    # 注意：这需要你在 Supabase 的 chapters 表里先创建 outline 列 (类型为 jsonb)
+    # SQL: ALTER TABLE chapters ADD COLUMN IF NOT EXISTS outline JSONB;
     try:
         supabase.table("chapters").update({"outline": final_outline}).eq("id", chapter_id).execute()
     except Exception as e:
