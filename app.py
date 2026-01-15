@@ -748,19 +748,24 @@ def extract_docx(file):
 def get_cached_outline_v2(chapter_id, text_content, uid):
     """
     [V12.0 终极版] 大纲生成：数据库优先 -> 语义分块 -> Map-Reduce -> 写入数据库
+    保持函数名不变，确保兼容性。
     """
+    import json
+
     # 1. 优先查库 (Permanent Storage)
+    # 如果数据库里已经存过大纲，直接拿来用，不用消耗 Token
     try:
+        # 注意：你需要先在 Supabase 执行 SQL: ALTER TABLE chapters ADD COLUMN IF NOT EXISTS outline JSONB;
         db_res = supabase.table("chapters").select("outline").eq("id", chapter_id).execute()
         if db_res.data and db_res.data[0].get('outline'):
-            # 如果数据库里有，直接返回，秒开！
+            print("🚀 Hit DB Outline Cache!")
             return db_res.data[0]['outline']
     except Exception as e:
         print(f"DB Read Error: {e}")
 
     # 2. 如果数据库没有，开始 AI 生成 (Map-Reduce)
 
-    # 注入会计知识 Prompt (需求3 & 4)
+    # 注入会计知识 Prompt
     domain_knowledge = """
     【领域知识注入】
     1. 关注《企业会计准则》的最新变化（如收入、租赁、金融工具准则）。
@@ -768,12 +773,13 @@ def get_cached_outline_v2(chapter_id, text_content, uid):
     3. 能够识别会计分录的借贷逻辑，不要将分录拆散。
     """
 
-    # A. 语义分块
-    chunks = semantic_chunking(text_content, max_chunk_size=12000)  # 留点余量给 prompt
+    # A. 语义分块 (依赖前文定义的 semantic_chunking 函数)
+    chunks = semantic_chunking(text_content, max_chunk_size=12000)
 
     all_sub_points = []
 
     # B. Map 阶段 (分块提取)
+    # 使用 st.empty 显示实时进度，让用户知道 AI 没卡死
     progress_text = st.empty()
 
     for i, chunk in enumerate(chunks):
@@ -786,17 +792,18 @@ def get_cached_outline_v2(chapter_id, text_content, uid):
         【要求】仅返回 JSON 字符串数组，如 ["固定资产确认条件", "折旧方法"]。
         """
         try:
-            # 使用较快模型处理分块
+            # 这里复用全局的 call_ai_json
             chunk_res = call_ai_json(map_prompt)
             if isinstance(chunk_res, list):
                 all_sub_points.extend(chunk_res)
         except:
             continue
 
-    progress_text.empty()
+    progress_text.empty()  # 清除进度提示
 
     # C. Reduce 阶段 (汇总整理)
-    if not all_sub_points: return ["大纲生成失败"]
+    if not all_sub_points:
+        return ["本章概览", "核心考点", "章节总结"]  # 兜底
 
     reduce_prompt = f"""
     【任务】作为资深会计讲师，请整理以下碎片化的知识点，生成一份逻辑严密的章节大纲。
@@ -816,9 +823,10 @@ def get_cached_outline_v2(chapter_id, text_content, uid):
         pass
 
     if not final_outline or not isinstance(final_outline, list):
-        final_outline = all_sub_points[:8]  # 兜底
+        final_outline = all_sub_points[:8]  # 再次兜底
 
     # 3. 存入数据库 (Persistence)
+    # 这样下次刷新页面或换电脑，就不用重新生成了
     try:
         supabase.table("chapters").update({"outline": final_outline}).eq("id", chapter_id).execute()
     except Exception as e:
