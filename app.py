@@ -743,33 +743,88 @@ def extract_docx(file):
 
 # --- 🎓 AI 课堂专用辅助函数 (修复版) ---
 
-@st.cache_data(show_spinner=False)
-def get_cached_outline_v2(chapter_id, text_content, uid):
-    """
-    [安全增强版] 用户隔离的大纲缓存
-    通过组合用户ID+章节ID+内容哈希作为缓存键，确保多用户隔离，防止串台。
-    """
-    # 1. 生成唯一标识符 (Content Hash)
-    content_hash = hashlib.md5(text_content[:5000].encode('utf-8')).hexdigest()[:8]
 
-    # 2. 截取首尾中三段作为摘要，减少 Token 消耗
-    summary_context = text_content[:3000] + "\n...\n" + text_content[
-        len(text_content) // 2: len(text_content) // 2 + 2000]
-
-    prompt = f"""
-    【任务】快速扫描教材，列出本章 5-8 个核心知识点标题。
-    【教材片段】{summary_context}
-    【格式】请返回纯 JSON 字符串数组，例如：["总论", "存货的初始计量", "期末计量"]
-    【注意】标题要简洁，不要带序号。
+@st.cache_data(show_spinner=False, ttl=3600)
+def get_chapter_outline(chapter_id, text_content, uid):
     """
+    [V12.0 终极版] 大纲生成：数据库优先 -> 语义分块 -> Map-Reduce -> 写入数据库
+    """
+    # 1. 优先查库 (Permanent Storage)
     try:
-        # 复用全局定义的 call_ai_json
-        res = call_ai_json(prompt)
-        if isinstance(res, list) and len(res) > 0:
-            return res
-        return ["本章概览", "核心考点", "实务案例", "章节总结"]  # 兜底
+        db_res = supabase.table("chapters").select("outline").eq("id", chapter_id).execute()
+        if db_res.data and db_res.data[0].get('outline'):
+            # 如果数据库里有，直接返回，秒开！
+            return db_res.data[0]['outline']
+    except Exception as e:
+        print(f"DB Read Error: {e}")
+
+    # 2. 如果数据库没有，开始 AI 生成 (Map-Reduce)
+
+    # 注入会计知识 Prompt (需求3 & 4)
+    domain_knowledge = """
+    【领域知识注入】
+    1. 关注《企业会计准则》的最新变化（如收入、租赁、金融工具准则）。
+    2. 识别“实务与理论”的平衡点，关注考纲常考的“确认、计量、记录、报告”环节。
+    3. 能够识别会计分录的借贷逻辑，不要将分录拆散。
+    """
+
+    # A. 语义分块
+    chunks = semantic_chunking(text_content, max_chunk_size=12000)  # 留点余量给 prompt
+
+    all_sub_points = []
+
+    # B. Map 阶段 (分块提取)
+    progress_text = st.empty()
+
+    for i, chunk in enumerate(chunks):
+        progress_text.caption(f"🤖 AI 正在扫描教材第 {i + 1}/{len(chunks)} 部分...")
+
+        map_prompt = f"""
+        【任务】阅读会计教材片段，提取核心知识点大纲。
+        {domain_knowledge}
+        【片段内容】...{chunk[:15000]}...
+        【要求】仅返回 JSON 字符串数组，如 ["固定资产确认条件", "折旧方法"]。
+        """
+        try:
+            # 使用较快模型处理分块
+            chunk_res = call_ai_json(map_prompt)
+            if isinstance(chunk_res, list):
+                all_sub_points.extend(chunk_res)
+        except:
+            continue
+
+    progress_text.empty()
+
+    # C. Reduce 阶段 (汇总整理)
+    if not all_sub_points: return ["大纲生成失败"]
+
+    reduce_prompt = f"""
+    【任务】作为资深会计讲师，请整理以下碎片化的知识点，生成一份逻辑严密的章节大纲。
+    {domain_knowledge}
+    【碎片列表】{json.dumps(all_sub_points, ensure_ascii=False)}
+    【要求】
+    1. 去重并合并同类项。
+    2. 按会计逻辑排序（定义 -> 确认 -> 计量 -> 记录 -> 报告/披露）。
+    3. 最终只保留 6-10 个一级核心标题。
+    4. 返回纯 JSON 字符串数组。
+    """
+
+    final_outline = []
+    try:
+        final_outline = call_ai_json(reduce_prompt)
     except:
-        return ["本章概览", "核心考点", "实务案例", "章节总结"]
+        pass
+
+    if not final_outline or not isinstance(final_outline, list):
+        final_outline = all_sub_points[:8]  # 兜底
+
+    # 3. 存入数据库 (Persistence)
+    try:
+        supabase.table("chapters").update({"outline": final_outline}).eq("id", chapter_id).execute()
+    except Exception as e:
+        print(f"DB Save Error: {e}")
+
+    return final_outline
 
 
 def check_outline_coverage_v2(outline, draft_text):
@@ -1038,43 +1093,75 @@ elif menu == "📂 智能拆书 & 资料":
 
     def clean_textbook_content(text):
         """
-        [增强版] 教材文本清洗
-        修复乱码、去除控制字符、标准化 Unicode
+        [V2.0 免费清洗] 结合正则与字典，修复OCR错误，不消耗Token
         """
         if not text: return ""
 
-        # 1. Unicode 标准化 (NFKC 模式)
-        # 这步非常关键！它会把兼容字符（如合字 ﬁ）拆分为标准字符 (fi)
-        # 也会修复很多看起来像乱码的拉丁字符
+        # A. 基础清洗 (Unicode标准化 + 去除控制符)
         text = unicodedata.normalize('NFKC', text)
-
-        # 2. 清除不可见控制字符 (除了换行符 \n 和制表符 \t)
-        # \x00-\x08: Null等
-        # \x0b-\x0c: 垂直制表等
-        # \x0e-\x1f: 其他控制符
         text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+        text = text.replace('\xa0', ' ').replace('\u3000', ' ')
 
-        # 3. 替换特殊的空白符号为普通空格
-        text = text.replace('\xa0', ' ')  # No-break space
-        text = text.replace('\u3000', ' ')  # 全角空格
+        # B. 会计术语纠错词典 (解决 OCR 常见错误)
+        corrections = {
+            "固走": "固定", "租贷": "租赁", "贷方": "贷方", "借方": "借方",
+            "帐面": "账面", "汇兑损益": "汇兑损益", "摊消": "摊销",
+            "应收帐款": "应收账款", "坏帐": "坏账", "所得税费用": "所得税费用",
+            "资本公积": "资本公积", "货记": "贷记", "借记": "借记"
+        }
+        for wrong, right in corrections.items():
+            text = text.replace(wrong, right)
 
-        # 4. 针对性修复常见的 PDF 乱码 (根据你的截图定制)
-        # 很多 PDF 会把空格识别成 â 或 ð 等，这里可以手动暴力替换
-        # 如果你发现特定的怪符号总是出现，可以在这里加
-        text = text.replace('â', '')
-        text = text.replace('ð', '')
+        # C. 修复数字格式 (如 1, 000 -> 1,000)
+        text = re.sub(r'(\d), (\d)', r'\1,\2', text)
 
-        # 5. 原有的按行清洗逻辑
+        # D. 按行清洗过短噪音
         lines = text.split('\n')
         cleaned = []
         for line in lines:
             s = line.strip()
-            # 过滤掉纯数字(页码)、过短的噪音
-            # 增加逻辑：如果一行全是乱七八糟的符号（非中英文数字），也丢弃
-            if len(s) < 2 or (s.isdigit() and len(s) < 5): continue
+            # 保留稍微长一点的行，或者是页码行之外的内容
+            if len(s) < 2 and not s.isalnum(): continue
             cleaned.append(s)
 
         return "\n".join(cleaned)
+
+
+    # --- 2. [新增] 语义分块函数 (需求2: 保持案例/分录完整性) ---
+    def semantic_chunking(text, max_chunk_size=15000):
+        """
+        智能分块：优先按章节、段落切分，避免切碎句子或分录。
+        返回: list of strings
+        """
+        if not text: return []
+        if len(text) < max_chunk_size: return [text]
+
+        chunks = []
+        current_chunk = ""
+
+        # 优先按双换行(段落)切分，其次按句号
+        paragraphs = re.split(r'(\n\n|\n)', text)
+
+        for para in paragraphs:
+            # 如果加上这一段没超限，就加上
+            if len(current_chunk) + len(para) < max_chunk_size:
+                current_chunk += para
+            else:
+                # 如果超限了，先把当前的存下来
+                if current_chunk:
+                    chunks.append(current_chunk)
+
+                # 如果这一段本身就超级长(比如长篇案例)，必须强行切
+                if len(para) > max_chunk_size:
+                    # 这里可以进一步按句号切，简化起见直接按长度切
+                    for i in range(0, len(para), max_chunk_size):
+                        chunks.append(para[i:i + max_chunk_size])
+                    current_chunk = ""  # 清空
+                else:
+                    current_chunk = para
+
+        if current_chunk: chunks.append(current_chunk)
+        return chunks
 
 
     subjects = get_subjects()
@@ -2091,6 +2178,15 @@ elif menu == "🎓 AI 课堂 (讲义)":
                                             chunk_text = full_text[start_idx:end_idx]
                                             context_text = st.session_state[DRAFT_KEY][-800:] if len(
                                                 st.session_state[DRAFT_KEY]) > 0 else ""
+
+                                            # 🟢 注入会计领域与考纲知识 (需求3 & 4)
+                                            accounting_context = """
+                                            【会计教学特殊指令】
+                                            1. **考纲对标**：明确区分“掌握”、“熟悉”和“了解”的知识点。对于“掌握”的内容（如分录编制、计算），请详细展开。
+                                            2. **准则引用**：如果涉及《企业会计准则》，请准确引用（如CAS 14 收入），并提示是否有新旧准则差异。
+                                            3. **易错点**：请在讲解中穿插“💣 易错警示”，指出考生常犯的逻辑错误（例如：混淆视同销售与进项税额转出）。
+                                            4. **分录完整性**：输出会计分录时，必须保持【借-贷-金额】格式完整，禁止切断分录。
+                                            """
 
                                             prompt = f"""
                                             【角色】金牌会计讲师
@@ -3225,43 +3321,70 @@ elif menu == "🛠️ 数据管理 & 补录":
     # ---------------------------------------------------------
     with tab_edit_m:
         st.markdown("#### 📘 教材原文编辑器")
-        st.caption("如果 AI 讲课时出现胡言乱语，通常是因为这里的**OCR原文识别错误**。请在此修正错别字。")
+        st.caption("在此处手动修正 OCR 错误。**点击下方的“AI 智能纠错”可调用大模型自动润色。**")
 
-        # === 🟢 关键调用：启用 has_material 过滤模式 ===
         cid_m, c_name_m = render_selectors("m", filter_mode="has_material")
 
         if cid_m:
             try:
                 mats = supabase.table("materials").select("*").eq("chapter_id", cid_m).order("id").execute().data
                 if not mats:
-                    # 理论上经过过滤不应该进这里，但为了保险
                     st.warning("⚠️ 该章节数据为空。")
                 else:
-                    mat_options = {f"片段 {i + 1} (ID: {m['id']}) - {m['content'][:20]}...": m for i, m in
+                    # 1. 批量清理功能 (需求1: 用户获取课件后，清理文本块)
+                    with st.expander("🗑️ 空间管理 (清理原文)", expanded=False):
+                        st.warning(
+                            "注意：这将删除本章节上传的所有 PDF/Word 原文片段！\n如果您已经生成了满意的讲义(AI Lessons)，可以删除原文以释放空间。但删除后无法再次生成新讲义。")
+                        if st.button("我已生成好讲义，确认清空原文", type="primary"):
+                            supabase.table("materials").delete().eq("chapter_id", cid_m).execute()
+                            st.success("原文已清理！")
+                            time.sleep(1);
+                            st.rerun()
+
+                    st.divider()
+
+                    # 2. 片段编辑
+                    mat_options = {f"片段 {i + 1} (ID: {m['id']}) - {m['content'][:30]}...": m for i, m in
                                    enumerate(mats)}
-                    selected_label = st.selectbox("选择要编辑的片段", list(mat_options.keys()))
+                    selected_label = st.selectbox("选择片段", list(mat_options.keys()))
                     target_mat = mat_options[selected_label]
 
                     with st.form(key=f"edit_mat_form_{target_mat['id']}"):
-                        new_content = st.text_area("编辑内容", value=target_mat['content'], height=400)
-                        c_sub1, c_sub2 = st.columns([1, 5])
+                        content_val = st.text_area("编辑内容", value=target_mat['content'], height=400)
+
+                        c_sub1, c_sub2, c_sub3 = st.columns([1, 1, 2])
                         with c_sub1:
-                            submit = st.form_submit_button("💾 保存修正", type="primary")
+                            submit = st.form_submit_button("💾 保存")
                         with c_sub2:
-                            if st.form_submit_button("🗑️ 删除此片段"):
-                                supabase.table("materials").delete().eq("id", target_mat['id']).execute()
-                                st.toast("片段已删除");
-                                time.sleep(1);
-                                st.rerun()
+                            delete_btn = st.form_submit_button("🗑️ 删除片段")
+                        with c_sub3:
+                            # 需求5: 手动 AI 修复入口
+                            ai_fix = st.form_submit_button("✨ AI 智能去乱码 (消耗Token)")
+
+                        if ai_fix:
+                            with st.spinner("AI 正在根据会计语境修复 OCR 错误..."):
+                                fix_p = f"请修复以下会计教材文本中的OCR错误（如'固走'->'固定'，'1,000'空格问题等），保持原意：\n\n{content_val}"
+                                fixed = call_ai_universal(fix_p)
+                                if fixed:
+                                    supabase.table("materials").update({"content": fixed}).eq("id", target_mat[
+                                        'id']).execute()
+                                    st.success("修复完成！请刷新。")
+                                    time.sleep(1);
+                                    st.rerun()
+
                         if submit:
-                            if new_content != target_mat['content']:
-                                supabase.table("materials").update({"content": new_content}).eq("id", target_mat[
+                            if content_val != target_mat['content']:
+                                supabase.table("materials").update({"content": content_val}).eq("id", target_mat[
                                     'id']).execute()
-                                st.success("✅ 教材内容已更新！");
+                                st.success("已保存！");
                                 time.sleep(1);
                                 st.rerun()
                             else:
-                                st.info("内容未变更。")
+                                st.info("无变更")
+
+                        if delete_btn:
+                            supabase.table("materials").delete().eq("id", target_mat['id']).execute()
+                            st.rerun()
             except Exception as e:
                 st.error(f"加载失败: {e}")
 
