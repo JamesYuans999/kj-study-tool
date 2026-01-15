@@ -743,6 +743,79 @@ def extract_docx(file):
 
 # --- 🎓 AI 课堂专用辅助函数 (修复版) ---
 
+# --- 0. 辅助函数定义区 (请确保这些在 get_cached_outline_v2 之前) ---
+import unicodedata
+import re
+
+
+def clean_textbook_content(text):
+    """
+    [V2.0 免费清洗] 结合正则与字典，修复OCR错误，不消耗Token
+    """
+    if not text: return ""
+
+    # A. 基础清洗 (Unicode标准化 + 去除控制符)
+    text = unicodedata.normalize('NFKC', text)
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+    text = text.replace('\xa0', ' ').replace('\u3000', ' ')
+
+    # B. 会计术语纠错词典 (解决 OCR 常见错误)
+    corrections = {
+        "固走": "固定", "租贷": "租赁", "贷方": "贷方", "借方": "借方",
+        "帐面": "账面", "汇兑损益": "汇兑损益", "摊消": "摊销",
+        "应收帐款": "应收账款", "坏帐": "坏账", "所得税费用": "所得税费用",
+        "资本公积": "资本公积", "货记": "贷记", "借记": "借记"
+    }
+    for wrong, right in corrections.items():
+        text = text.replace(wrong, right)
+
+    # C. 修复数字格式 (如 1, 000 -> 1,000)
+    text = re.sub(r'(\d), (\d)', r'\1,\2', text)
+
+    # D. 按行清洗过短噪音
+    lines = text.split('\n')
+    cleaned = []
+    for line in lines:
+        s = line.strip()
+        if len(s) < 2 and not s.isalnum(): continue
+        cleaned.append(s)
+
+    return "\n".join(cleaned)
+
+
+def semantic_chunking(text, max_chunk_size=15000):
+    """
+    智能分块：优先按章节、段落切分，避免切碎句子或分录。
+    返回: list of strings
+    """
+    if not text: return []
+    if len(text) < max_chunk_size: return [text]
+
+    chunks = []
+    current_chunk = ""
+
+    # 优先按双换行(段落)切分，其次按句号
+    paragraphs = re.split(r'(\n\n|\n)', text)
+
+    for para in paragraphs:
+        # 如果加上这一段没超限，就加上
+        if len(current_chunk) + len(para) < max_chunk_size:
+            current_chunk += para
+        else:
+            # 如果超限了，先把当前的存下来
+            if current_chunk:
+                chunks.append(current_chunk)
+
+            # 如果这一段本身就超级长(比如长篇案例)，必须强行切
+            if len(para) > max_chunk_size:
+                for i in range(0, len(para), max_chunk_size):
+                    chunks.append(para[i:i + max_chunk_size])
+                current_chunk = ""  # 清空
+            else:
+                current_chunk = para
+
+    if current_chunk: chunks.append(current_chunk)
+    return chunks
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def get_cached_outline_v2(chapter_id, text_content, uid):
