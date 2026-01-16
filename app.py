@@ -2129,61 +2129,17 @@ elif menu == "🎓 AI 课堂 (讲义)":
                 # >>> 左侧：大纲导航 + 一键补全 <<<
                 with col_left:
                     st.markdown("#### 📌 知识地图")
-
-                    # 筛选未覆盖项
                     missing_items = [item for item in outline_status if not item['covered']] if outline_status else []
 
                     if outline_status:
-                        # 遍历渲染每一个大纲条目
                         for item in outline_status:
-                            # 清洗标题用于搜索（去掉**等符号）
-                            clean_title = item['title'].replace('*', '').replace('#', '').strip()
-
-                            # 布局：图标 | 标题 | 按钮
-                            c_icon, c_txt, c_btn = st.columns([1, 6, 2])
-
-                            # 1. 图标状态
-                            is_covered = item['covered']
-                            icon = "✅" if is_covered else "🔴"
-                            with c_icon:
-                                st.write(icon)
-
-                            # 2. 标题显示
-                            with c_txt:
-                                if not is_covered:
-                                    st.markdown(f"**{item['title']}**")
-                                else:
-                                    st.caption(item['title'])
-
-                            # 3. 核心功能区：跳转或补全
-                            with c_btn:
-                                # 只有未覆盖的才需要操作
-                                if not is_covered:
-                                    # 尝试在原文中定位这个标题的位置
-                                    # 这里的 full_text 是 Python 内存里的教材全文
-                                    match_idx = full_text.find(clean_title)
-
-                                    if match_idx != -1:
-                                        # === 🟢 复活功能：指定章节生成 ===
-                                        # 如果在原文里找到了这个标题，显示“跳转”按钮
-                                        if st.button("📍", key=f"jump_{clean_title}",
-                                                     help=f"将阅读进度跳转到：{clean_title}，并从此开始生成"):
-                                            st.session_state[CURSOR_KEY] = match_idx
-                                            st.toast(f"已跳转至：{clean_title}")
-                                            time.sleep(0.5)
-                                            st.rerun()
-                                    else:
-                                        # 如果原文没找到（可能是AI总结的标题），则显示“补全”按钮
-                                        if st.button("➕", key=f"patch_{clean_title}",
-                                                     help="原文未定位到，点击让 AI 编写补充"):
-                                            # (这里复用之前的单点补全逻辑，为了代码简洁，建议直接用下方的一键补全)
-                                            pass
+                            icon = "✅" if item['covered'] else "🔴"
+                            txt = f"**{item['title']}**" if not item['covered'] else item['title']
+                            st.markdown(f"{icon} {txt}")
 
                         st.markdown("---")
-
-                        # === 一键补全功能 (原有逻辑) ===
                         if missing_items:
-                            if st.button("⚡ 一键补全所有红圈", type="primary", help="AI 自动查漏补缺"):
+                            if st.button("⚡ 一键补全红圈", type="primary", help="AI 自动查漏补缺"):
                                 st.session_state[GEN_LOCK_KEY] = True
                                 bar = st.progress(0)
                                 try:
@@ -2197,19 +2153,22 @@ elif menu == "🎓 AI 课堂 (讲义)":
 
                                     st.session_state[CURSOR_KEY] = total_len
 
-                                    # 自动保存
+                                    # 自动保存逻辑 (适配多版本)
                                     active_id = st.session_state[ACTIVE_ID_KEY]
                                     upsert_data = {
                                         "user_id": user_id, "chapter_id": cid,
-                                        "title": st.session_state.get(f"title_val_{cid}", lesson_title),
+                                        "title": st.session_state.get(f"title_val_{cid}", f"深度解析：{c_name}"),
+                                        # 获取当前标题框的值
                                         "content": st.session_state[DRAFT_KEY],
-                                        "current_cursor": total_len, "updated_at": "now()"
+                                        "current_cursor": total_len,
+                                        "updated_at": "now()"
                                     }
                                     if active_id and active_id != "new":
                                         supabase.table("ai_lessons").update(upsert_data).eq("id", active_id).execute()
                                     else:
-                                        res = supabase.table("ai_lessons").insert(upsert_data).execute()
-                                        st.session_state[ACTIVE_ID_KEY] = res.data[0]['id']
+                                        # 如果是新建状态下补全，执行插入
+                                        new_res = supabase.table("ai_lessons").insert(upsert_data).execute()
+                                        st.session_state[ACTIVE_ID_KEY] = new_res.data[0]['id']  # 更新为已保存ID
 
                                     st.success("已补全并存档！")
                                     time.sleep(1);
