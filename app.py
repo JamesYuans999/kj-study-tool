@@ -960,27 +960,32 @@ def get_cached_outline_v2(chapter_id, text_content, uid):
 def check_outline_coverage_v2(outline, draft_text):
     """
     [V13.0 强力版] 忽略Markdown符号和标点，只比对核心文字
-    解决：大纲带 **号导致匹配失败，从而导致跳转按钮不出现的问题
+    解决：大纲带 **号导致匹配失败的问题
     """
     if not outline: return []
     coverage = []
 
     # 1. 预处理草稿：去除所有Markdown符号、空格、标点，只留汉字和数字
+    # 这样 '## 第一节 总论' 和 '**第一节 总论**' 都会变成 '第一节总论'，就能匹配上了
     def clean_str(s):
         return re.sub(r'[^\w\u4e00-\u9fa5]', '', s).lower()
 
     clean_draft = clean_str(draft_text)
 
     for point in outline:
-        # 2. 清洗大纲标题 (把 "**第一节**" 变成 "第一节")
+        # 2. 清洗大纲标题
         clean_point = clean_str(point)
 
         # 3. 核心匹配
         is_covered = False
         if len(clean_point) > 2:
-            if clean_point in clean_draft: is_covered = True
+            # 如果清洗后匹配到了
+            if clean_point in clean_draft:
+                is_covered = True
         else:
-            if point in draft_text: is_covered = True
+            # 如果标题太短（如“总论”），还是用原始文本模糊匹配比较安全
+            if point in draft_text:
+                is_covered = True
 
         coverage.append({"title": point, "covered": is_covered})
     return coverage
@@ -2122,6 +2127,7 @@ elif menu == "🎓 AI 课堂 (讲义)":
                 col_left, col_right = st.columns([1, 3])
 
                 # >>> 左侧：大纲导航 + 一键补全 <<<
+                # >>> 左侧：大纲导航 + 定位跳转 + 一键补全 <<<
                 with col_left:
                     st.markdown("#### 📌 知识地图")
 
