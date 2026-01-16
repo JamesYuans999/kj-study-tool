@@ -1587,7 +1587,7 @@ elif menu == "📂 智能拆书 & 资料":
                                                     txt += f"\n\n====== 答案区域 ======\n{a_text}"
 
                                             # 调用 AI
-                                            final_p = f"{user_extract_prompt}\n\n文本：\n{txt[:60000]}"
+                                            final_p = f"{user_extract_prompt}\n\n文本：\n{txt[:200000]}"
                                             r = call_ai_universal(final_p, timeout_override=300)
 
                                             if r and "QuotaFailure" not in str(r):
@@ -2012,14 +2012,65 @@ elif menu == "🎓 AI 课堂 (讲义)":
             if GEN_LOCK_KEY not in st.session_state: st.session_state[GEN_LOCK_KEY] = False
             if EDIT_MODE_KEY not in st.session_state: st.session_state[EDIT_MODE_KEY] = False
 
-            # --- 2. 智能大纲 ---
+            # --- 2. 智能大纲 (V10.1 修复：自动加载数据库已有大纲) ---
+
+            # A. 状态同步：如果 Session 是空的，尝试从数据库加载
             if not st.session_state[OUTLINE_KEY]:
+                try:
+                    db_check = supabase.table("chapters").select("outline").eq("id", cid).execute()
+                    if db_check.data and db_check.data[0].get('outline'):
+                        st.session_state[OUTLINE_KEY] = db_check.data[0]['outline']
+                except Exception as e:
+                    pass
+
+            # B. 大纲显示与管理区域
+            if not st.session_state[OUTLINE_KEY]:
+                # 如果没有大纲，显示生成按钮
                 with st.expander("✨ 智能大纲 (点击生成)", expanded=True):
                     st.info("💡 系统将扫描教材生成核心考点地图。")
-                    if st.button("🔍 分析本章考点"):
-                        with st.spinner("AI 正在构建知识地图..."):
+                    if st.button("🔍 分析本章考点", type="primary"):
+                        with st.spinner("AI 正在构建知识地图 (Map-Reduce)..."):
                             res = get_cached_outline_v2(cid, full_text, user_id)
                             st.session_state[OUTLINE_KEY] = res
+                            st.rerun()
+            else:
+                # 如果已有大纲，提供管理面板
+                with st.expander("🗺️ 大纲管理 (编辑 / 重做)", expanded=False):
+                    c_out_1, c_out_2 = st.columns([3, 1])
+                    with c_out_1:
+                        # 允许用户手动修改大纲 (JSON List 格式)
+                        import json
+
+                        current_json_str = json.dumps(st.session_state[OUTLINE_KEY], ensure_ascii=False, indent=2)
+                        new_json_str = st.text_area("编辑大纲 (JSON格式)", value=current_json_str, height=200)
+
+                        if new_json_str != current_json_str:
+                            if st.button("💾 保存大纲修改"):
+                                try:
+                                    new_outline = json.loads(new_json_str)
+                                    if isinstance(new_outline, list):
+                                        # 更新 Session
+                                        st.session_state[OUTLINE_KEY] = new_outline
+                                        # 更新 Database
+                                        supabase.table("chapters").update({"outline": new_outline}).eq("id",
+                                                                                                       cid).execute()
+                                        st.success("大纲已更新！")
+                                        time.sleep(1)
+                                        st.rerun()
+                                    else:
+                                        st.error("格式错误：必须是列表 [...]")
+                                except Exception as e:
+                                    st.error(f"JSON 解析失败: {e}")
+
+                    with c_out_2:
+                        st.warning("⚠️ 危险操作")
+                        if st.button("🔥 销毁大纲并重置", help="将删除现有大纲和所有生成进度，强制 AI 重新分析"):
+                            # 1. 清空 Session
+                            st.session_state[OUTLINE_KEY] = []
+                            st.session_state[DRAFT_KEY] = ""
+                            st.session_state[CURSOR_KEY] = 0
+                            # 2. 清空数据库 (关键！否则会自动加载回僵尸大纲)
+                            supabase.table("chapters").update({"outline": None}).eq("id", cid).execute()
                             st.rerun()
 
             # --- 3. 进度与可视化 ---
@@ -2143,10 +2194,11 @@ elif menu == "🎓 AI 课堂 (讲义)":
                                 st.session_state[GEN_LOCK_KEY] = False
 
                     st.markdown("---")
-                    if st.button("🧹 重置进度"):
+                    if st.button("🧹 重置正文进度 (保留大纲)", help="仅清空已生成的讲义内容，保留大纲结构"):
                         st.session_state[DRAFT_KEY] = ""
                         st.session_state[CURSOR_KEY] = 0
                         st.session_state[OVERWRITE_KEY] = None
+                        # 不要清空 OUTLINE_KEY
                         st.rerun()
                 else:
                     st.caption("暂无大纲")
