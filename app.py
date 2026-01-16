@@ -31,85 +31,134 @@ st.markdown("""
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
 <style>
     /* =======================================
-       1. 关键修复：恢复侧边栏原生行为
+       1. 全局背景与字体 (奶油风)
        ======================================= */
-    /* 绝对不要设置 position: fixed !important，否则关不掉 */
+    .stApp {
+        background-color: #FFFDF9; /* 暖暖的米白色背景 */
+        background-image: radial-gradient(#FFEFD5 1px, transparent 1px); /* 可爱波点纹理 */
+        background-size: 20px 20px;
+        font-family: 'Nunito', 'Segoe UI', 'Microsoft YaHei', sans-serif;
+    }
+
+    /* =======================================
+       2. 侧边栏 (玻璃拟态效果)
+       ======================================= */
     section[data-testid="stSidebar"] {
-        background-color: #ffffff;
-        border-right: 1px solid #f0f0f0;
-        z-index: 99998 !important; /* 仅保证比 Header 高，但不锁定位置 */
+        background-color: rgba(255, 255, 255, 0.85); /* 半透明 */
+        border-right: none;
+        box-shadow: 4px 0 20px rgba(0,0,0,0.05); /* 柔和阴影 */
+        backdrop-filter: blur(10px); /* 磨砂玻璃感 */
+        z-index: 99998 !important;
+    }
+    
+    /* 侧边栏标题 */
+    [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
+        color: #FF8A65 !important; /* 珊瑚色标题 */
+        font-weight: 800;
     }
 
     /* =======================================
-       2. 汉堡菜单按钮 (必须置顶)
+       3. 按钮美化 (果冻感)
        ======================================= */
-    /* 确保按钮在最上层，否则点不到 */
-    button[data-testid="stSidebarCollapsedControl"] {
-        display: block !important;
-        z-index: 999999 !important; /* 最高层级 */
-        color: #00C090 !important; /* 绿色图标 */
-        position: fixed; /* 按钮固定在左上角 */
-        top: 10px;
-        left: 10px;
-        background: rgba(255,255,255,0.8); /*稍微加点背景防混淆*/
-        border-radius: 50%;
-        width: 2.5rem;
-        height: 2.5rem;
-    }
-
-    /* 兼容旧版 ID */
-    [data-testid="collapsedControl"] {
-        display: block !important;
-        z-index: 999999 !important;
-        color: #00C090 !important;
-        position: fixed;
-        top: 10px;
-        left: 10px;
-    }
-
-    /* =======================================
-       3. 顶部 Header (防止遮挡)
-       ======================================= */
-    header[data-testid="stHeader"] {
-        background: rgba(255, 255, 255, 0.95) !important;
-        z-index: 99 !important; /* 比侧边栏低 */
-        height: 3.75rem;
-    }
-
-    /* 隐藏彩虹条 */
-    [data-testid="stDecoration"] { display: none !important; }
-
-    /* =======================================
-       4. 手机端内容避让 (关键)
-       ======================================= */
-    @media (max-width: 768px) {
-        /* 强制给主内容区顶部加 padding，把内容“顶”下来 */
-        .main .block-container {
-            padding-top: 5rem !important; 
-            max-width: 100vw !important;
-        }
-    }
-
-    /* =======================================
-       5. 视觉美化 (Bento Grid)
-       ======================================= */
-    .stApp { background-color: #F9F9F0; font-family: 'Segoe UI', sans-serif; }
-
-    /* 卡片 */
-    .css-card {
-        background: #fff; border-radius: 12px; padding: 20px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.03); border: 1px solid #eee; margin-bottom: 15px;
-    }
-
-    /* 统计数字 */
-    .stat-value { font-size: 2rem; font-weight: 800; color: #333; }
-
-    /* 按钮 */
+    /* 普通按钮 */
     .stButton>button {
-        background: #00C090; color: white; border: none; border-radius: 8px;
-        height: 45px; font-weight: 600;
+        background: linear-gradient(135deg, #00C090 0%, #20E3B2 100%); /* 薄荷绿渐变 */
+        color: white;
+        border: none;
+        border-radius: 25px; /* 大圆角，像药丸一样 */
+        height: 50px;
+        font-weight: 700;
+        font-size: 16px;
+        box-shadow: 0 4px 10px rgba(0, 192, 144, 0.3);
+        transition: all 0.3s ease;
     }
-    .stButton>button:hover { background: #00a87e; color: white; }
+    .stButton>button:hover {
+        transform: translateY(-3px) scale(1.02); /* 悬浮上移 */
+        box-shadow: 0 6px 15px rgba(0, 192, 144, 0.4);
+    }
+    
+    /* 次要按钮 / 灰色按钮 */
+    button[kind="secondary"] {
+        background: #F0F2F6 !important;
+        color: #555 !important;
+        border: 2px solid #fff !important;
+    }
+
+    /* =======================================
+       4. 卡片 (Bento Grid) - 圆润可爱
+       ======================================= */
+    .css-card {
+        background: rgba(255, 255, 255, 0.9);
+        border-radius: 20px; /* 圆角 */
+        padding: 25px;
+        border: 2px solid #FFF0F5; /* 淡淡的粉色边框 */
+        box-shadow: 0 8px 20px rgba(255, 183, 77, 0.1); /* 暖色投影 */
+        margin-bottom: 20px;
+        transition: transform 0.3s;
+    }
+    .css-card:hover {
+        transform: translateY(-5px); /* 卡片悬浮 */
+    }
+    
+    .stat-title {
+        color: #888;
+        font-size: 0.9rem;
+        font-weight: 600;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+    }
+    
+    .stat-value {
+        font-size: 2.2rem;
+        font-weight: 900;
+        background: -webkit-linear-gradient(45deg, #FFB74D, #FF7043); /* 橙色渐变文字 */
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+    
+    .stat-icon {
+        font-size: 2rem;
+        color: #00C090;
+        background: #E0F7FA;
+        padding: 10px;
+        border-radius: 50%; /* 圆形图标底 */
+        margin-bottom: 10px;
+        display: inline-block;
+    }
+
+    /* =======================================
+       5. 进度条与输入框
+       ======================================= */
+    /* 进度条颜色改为彩虹糖风格 */
+    .stProgress > div > div > div > div {
+        background-image: linear-gradient(90deg, #FF8A65, #FFB74D);
+        border-radius: 10px;
+    }
+    
+    /* 输入框圆角 */
+    .stTextInput>div>div>input, .stSelectbox>div>div, .stTextArea>div>div>textarea {
+        border-radius: 12px !important;
+        border: 1px solid #E0E0E0;
+    }
+    
+    /* 选中状态的高亮色 */
+    .stRadio label:hover { color: #FF7043 !important; }
+
+    /* =======================================
+       6. 手机端适配修复 (保留)
+       ======================================= */
+    button[data-testid="stSidebarCollapsedControl"] {
+        background: white !important;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        color: #FF7043 !important; /* 汉堡菜单变成橙色 */
+    }
+    
+    header[data-testid="stHeader"] {
+        background: rgba(255, 253, 249, 0.9) !important;
+    }
+    
+    /* 成功/错误提示框也变圆润 */
+    .stAlert { border-radius: 15px; }
 
 </style>
 """, unsafe_allow_html=True)
