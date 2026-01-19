@@ -959,23 +959,22 @@ def get_cached_outline_v2(chapter_id, text_content, uid):
 
 def check_outline_coverage_v2(outline, draft_text):
     """
-    [V13.0 强力版] 忽略Markdown符号和标点，只比对核心文字
-    解决：大纲带 **号导致匹配失败的问题
-    修复：增加类型安全检查，防止 re.sub 处理非字符串报错
+    [V13.2 终极稳定版] 忽略Markdown符号和标点，只比对核心文字
+    修复：增加类型安全检查，并兼容字典格式的旧数据
     """
     if not outline: return []
     coverage = []
 
-    # 1. 预处理草稿：去除所有Markdown符号、空格、标点，只留汉字和数字
-    # 这样 '## 第一节 总论' 和 '**第一节 总论**' 都会变成 '第一节总论'，就能匹配上了
+    # 1. 预处理工具：清洗字符串
     def clean_str(s):
         if not s: return ""
-        # 强制转换为字符串，防止传入 None 或数字
+        # 🛡️ 防御性编程：强制转字符串，防止数字/None报错
         if not isinstance(s, str):
             s = str(s)
+        # 去除Markdown、标点、特殊符号，只留汉字字母数字，转小写
         return re.sub(r'[^\w\u4e00-\u9fa5]', '', s).lower()
 
-    # 确保 draft_text 安全
+    # 🛡️ 确保草稿文本也是安全的
     if draft_text is None:
         draft_text = ""
     elif not isinstance(draft_text, str):
@@ -984,24 +983,29 @@ def check_outline_coverage_v2(outline, draft_text):
     clean_draft = clean_str(draft_text)
 
     for point in outline:
-        # 确保 point 是字符串
-        point_str = str(point) if point is not None else ""
+        # === 🟢 核心优化点：智能提取标题 ===
+        # 如果数据库存的是字典 {'title': '总论'}，取 title
+        # 如果存的是字符串 '总论'，直接用
+        if isinstance(point, dict):
+            point_str = str(point.get('title', ''))
+        else:
+            point_str = str(point) if point is not None else ""
 
         # 2. 清洗大纲标题
         clean_point = clean_str(point_str)
 
-        # 3. 核心匹配
+        # 3. 核心匹配逻辑
         is_covered = False
-        if len(clean_point) > 2:
-            # 如果清洗后匹配到了
+        if len(clean_point) > 1:  # 稍微放宽，大于1个字才清洗匹配
             if clean_point in clean_draft:
                 is_covered = True
         else:
-            # 如果标题太短（如“总论”），还是用原始文本模糊匹配比较安全
+            # 极短标题（如“序”），用原始文本模糊匹配更安全
             if point_str and point_str in draft_text:
                 is_covered = True
 
         coverage.append({"title": point_str, "covered": is_covered})
+
     return coverage
 
 
