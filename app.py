@@ -2131,16 +2131,16 @@ elif menu == "🎓 AI 课堂 (讲义)":
                 missing_items = [item for item in final_status if not item['covered']]
 
                 if final_status:
+                    # 1. 渲染红绿灯列表
                     for idx, item in enumerate(final_status):
                         c_btn, c_txt = st.columns([1, 4])
                         is_covered = item['covered']
                         title = item['title']
 
-                        # 🟢 手动切换状态按钮
                         with c_btn:
                             btn_label = "✅" if is_covered else "🔴"
-                            if st.button(btn_label, key=f"tg_{idx}_{cid}", help="点击手动切换状态 (红/绿)"):
-                                # 切换状态并保存到 overrides
+                            # 手动切换状态
+                            if st.button(btn_label, key=f"tg_{idx}_{cid}", help="点击切换状态"):
                                 st.session_state[OUTLINE_OVERRIDES_KEY][title] = not is_covered
                                 st.rerun()
 
@@ -2151,9 +2151,10 @@ elif menu == "🎓 AI 课堂 (讲义)":
                                 st.caption(title)
 
                     st.markdown("---")
-                    # 一键补全
+
+                    # 2. 一键补全按钮
                     if missing_items:
-                        if st.button("⚡ 一键补全红圈", type="primary"):
+                        if st.button("⚡ 一键补全红圈", type="primary", use_container_width=True):
                             st.session_state[GEN_LOCK_KEY] = True
                             bar = st.progress(0)
                             try:
@@ -2163,21 +2164,72 @@ elif menu == "🎓 AI 课堂 (讲义)":
                                     if res:
                                         st.session_state[DRAFT_KEY] += f"\n\n### ✨ 补充：{m_item['title']}\n{res}"
                                         st.session_state[EDITOR_KEY] = st.session_state[DRAFT_KEY]
-                                        # 补全后自动标记为已覆盖
                                         st.session_state[OUTLINE_OVERRIDES_KEY][m_item['title']] = True
                                     bar.progress((i + 1) / len(missing_items))
 
                                 st.session_state[CURSOR_KEY] = total_len
-                                # 自动保存... (省略重复代码)
+                                # 自动保存逻辑...
+                                # (这里为了简洁省略了重复的update db代码，实际使用请保持之前的save逻辑)
+                                active_id = st.session_state[ACTIVE_ID_KEY]
+                                upsert = {
+                                    "user_id": user_id, "chapter_id": cid, "title": lesson_title,
+                                    "content": st.session_state[DRAFT_KEY], "ai_model": style,
+                                    "current_cursor": total_len, "updated_at": "now()"
+                                }
+                                if active_id and active_id != "new":
+                                    supabase.table("ai_lessons").update(upsert).eq("id", active_id).execute()
+                                else:
+                                    nr = supabase.table("ai_lessons").insert(upsert).execute()
+                                    st.session_state[ACTIVE_ID_KEY] = nr.data[0]['id']
+
                                 st.rerun()
                             except:
                                 pass
                             finally:
                                 st.session_state[GEN_LOCK_KEY] = False
 
-                    if st.button("🧹 重置大纲状态", help="清除所有手动标记的红绿状态"):
-                        st.session_state[OUTLINE_OVERRIDES_KEY] = {}
-                        st.rerun()
+                    st.write("")  # 占位空行
+
+                    # 3. === 🟢 复活功能：大纲管理面板 ===
+                    with st.expander("🗺️ 大纲管理 (编辑 / 重做)", expanded=False):
+                        import json
+
+                        # A. 编辑大纲文字
+                        st.caption("手动修改大纲标题 (JSON格式)：")
+                        current_json = json.dumps(st.session_state[OUTLINE_KEY], ensure_ascii=False, indent=2)
+                        new_json = st.text_area("大纲源码", value=current_json, height=200,
+                                                label_visibility="collapsed")
+
+                        if st.button("💾 保存大纲修改", use_container_width=True):
+                            try:
+                                new_outline = json.loads(new_json)
+                                if isinstance(new_outline, list):
+                                    st.session_state[OUTLINE_KEY] = new_outline
+                                    # 同步到数据库 chapters 表
+                                    supabase.table("chapters").update({"outline": new_outline}).eq("id", cid).execute()
+                                    st.success("大纲已更新！")
+                                    time.sleep(1);
+                                    st.rerun()
+                                else:
+                                    st.error("格式错误：必须是列表 []")
+                            except:
+                                st.error("JSON 格式错误")
+
+                        st.markdown("---")
+
+                        # B. 危险操作
+                        if st.button("🔥 销毁大纲并重置", type="primary", use_container_width=True,
+                                     help="完全删除现有大纲，强制AI重新扫描教材生成"):
+                            st.session_state[OUTLINE_KEY] = []
+                            st.session_state[OUTLINE_OVERRIDES_KEY] = {}
+                            # 清空数据库里的 outline 字段
+                            supabase.table("chapters").update({"outline": None}).eq("id", cid).execute()
+                            st.rerun()
+
+                        if st.button("🧹 仅重置红绿状态", use_container_width=True):
+                            st.session_state[OUTLINE_OVERRIDES_KEY] = {}
+                            st.rerun()
+
                 else:
                     st.caption("暂无大纲")
 
@@ -2289,10 +2341,11 @@ elif menu == "🎓 AI 课堂 (讲义)":
 
                 with b_col1:
                     if is_editing:
-                        st.warning("请退出编辑模式")
+                        st.warning("⚠️ 请先点击右上角“完成”退出编辑模式。")
                     elif is_finished:
-                        st.success("🎉 生成完毕")
-                        if st.button("🎓 生成结语", type="primary"): pass  # 略
+                        # === 🟢 修复：这里加回了气球动画 ===
+                        st.balloons()
+                        st.success("🎉 太棒了！本章内容已全部生成完毕！")
                     else:
                         g_col, u_col = st.columns([3, 2])
                         with g_col:
