@@ -961,6 +961,7 @@ def check_outline_coverage_v2(outline, draft_text):
     """
     [V13.0 强力版] 忽略Markdown符号和标点，只比对核心文字
     解决：大纲带 **号导致匹配失败的问题
+    修复：增加类型安全检查，防止 re.sub 处理非字符串报错
     """
     if not outline: return []
     coverage = []
@@ -968,13 +969,26 @@ def check_outline_coverage_v2(outline, draft_text):
     # 1. 预处理草稿：去除所有Markdown符号、空格、标点，只留汉字和数字
     # 这样 '## 第一节 总论' 和 '**第一节 总论**' 都会变成 '第一节总论'，就能匹配上了
     def clean_str(s):
+        if not s: return ""
+        # 强制转换为字符串，防止传入 None 或数字
+        if not isinstance(s, str):
+            s = str(s)
         return re.sub(r'[^\w\u4e00-\u9fa5]', '', s).lower()
+
+    # 确保 draft_text 安全
+    if draft_text is None:
+        draft_text = ""
+    elif not isinstance(draft_text, str):
+        draft_text = str(draft_text)
 
     clean_draft = clean_str(draft_text)
 
     for point in outline:
+        # 确保 point 是字符串
+        point_str = str(point) if point is not None else ""
+
         # 2. 清洗大纲标题
-        clean_point = clean_str(point)
+        clean_point = clean_str(point_str)
 
         # 3. 核心匹配
         is_covered = False
@@ -984,10 +998,10 @@ def check_outline_coverage_v2(outline, draft_text):
                 is_covered = True
         else:
             # 如果标题太短（如“总论”），还是用原始文本模糊匹配比较安全
-            if point in draft_text:
+            if point_str and point_str in draft_text:
                 is_covered = True
 
-        coverage.append({"title": point, "covered": is_covered})
+        coverage.append({"title": point_str, "covered": is_covered})
     return coverage
 
 
