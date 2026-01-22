@@ -50,7 +50,7 @@ st.markdown("""
         backdrop-filter: blur(10px); /* 磨砂玻璃感 */
         z-index: 99998 !important;
     }
-    
+
     /* 侧边栏标题 */
     [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
         color: #FF8A65 !important; /* 珊瑚色标题 */
@@ -76,7 +76,7 @@ st.markdown("""
         transform: translateY(-3px) scale(1.02); /* 悬浮上移 */
         box-shadow: 0 6px 15px rgba(0, 192, 144, 0.4);
     }
-    
+
     /* 次要按钮 / 灰色按钮 */
     button[kind="secondary"] {
         background: #F0F2F6 !important;
@@ -99,7 +99,7 @@ st.markdown("""
     .css-card:hover {
         transform: translateY(-5px); /* 卡片悬浮 */
     }
-    
+
     .stat-title {
         color: #888;
         font-size: 0.9rem;
@@ -107,7 +107,7 @@ st.markdown("""
         letter-spacing: 1px;
         text-transform: uppercase;
     }
-    
+
     .stat-value {
         font-size: 2.2rem;
         font-weight: 900;
@@ -115,7 +115,7 @@ st.markdown("""
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
     }
-    
+
     .stat-icon {
         font-size: 2rem;
         color: #00C090;
@@ -134,13 +134,13 @@ st.markdown("""
         background-image: linear-gradient(90deg, #FF8A65, #FFB74D);
         border-radius: 10px;
     }
-    
+
     /* 输入框圆角 */
     .stTextInput>div>div>input, .stSelectbox>div>div, .stTextArea>div>div>textarea {
         border-radius: 12px !important;
         border: 1px solid #E0E0E0;
     }
-    
+
     /* 选中状态的高亮色 */
     .stRadio label:hover { color: #FF7043 !important; }
 
@@ -152,11 +152,11 @@ st.markdown("""
         box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         color: #FF7043 !important; /* 汉堡菜单变成橙色 */
     }
-    
+
     header[data-testid="stHeader"] {
         background: rgba(255, 253, 249, 0.9) !important;
     }
-    
+
     /* 成功/错误提示框也变圆润 */
     .stAlert { border-radius: 15px; }
 
@@ -184,7 +184,6 @@ except:
 
 @st.cache_resource
 def init_supabase():
-
     return create_client(
         SUPABASE_URL,
         SUPABASE_KEY,
@@ -193,6 +192,7 @@ def init_supabase():
             storage_client_timeout=10
         )
     )
+
 
 supabase = init_supabase()
 
@@ -229,6 +229,7 @@ def check_if_finished(curr_pos, total_len, outline_coverage):
         if covered_count >= len(outline_coverage) * 0.9: return True
     return False
 
+
 def check_and_update_streak(uid):
     """检查并更新连续打卡天数"""
     try:
@@ -261,7 +262,9 @@ def check_and_update_streak(uid):
         print(f"Streak Error: {e}")
         return 0
 
+
 check_and_update_streak(user_id)
+
 
 # ==============================================================================
 # 3. 核心功能函数 (AI / DB / File)
@@ -271,6 +274,7 @@ async def _generate_audio_coroutine(text, voice, filepath):
     """内部协程，负责实际生成"""
     communicate = edge_tts.Communicate(text, voice)
     await communicate.save(filepath)
+
 
 def generate_audio_file(text, voice="zh-CN-XiaoxiaoNeural"):
     """
@@ -293,6 +297,7 @@ def generate_audio_file(text, voice="zh-CN-XiaoxiaoNeural"):
         st.error(f"语音合成失败: {e}")
         return None
 
+
 # --- 数据库 Helper 函数 ---
 def get_user_profile(uid):
     try:
@@ -301,7 +306,9 @@ def get_user_profile(uid):
             supabase.table("study_profile").insert({"user_id": uid}).execute()
             return {}
         return res.data[0]
-    except: return {}
+    except:
+        return {}
+
 
 def update_settings(uid, settings_dict):
     """更新用户设置"""
@@ -309,20 +316,24 @@ def update_settings(uid, settings_dict):
         curr = get_user_profile(uid).get('settings') or {}
         curr.update(settings_dict)
         supabase.table("study_profile").update({"settings": curr}).eq("user_id", uid).execute()
-    except: pass
-
-
+    except:
+        pass
 
 
 def save_ai_pref():
     """回调：保存模型选择"""
     p = st.session_state.get('ai_provider_select')
     m = None
-    if "OpenRouter" in str(p): m = st.session_state.get('or_model_select')
-    elif "DeepSeek" in str(p): m = st.session_state.get('ds_model_select')
-    elif "Gemini" in str(p): m = st.session_state.get('gl_model_select')
-    elif "Glama" in str(p): m = st.session_state.get('glama_model_id')
+    if "OpenRouter" in str(p):
+        m = st.session_state.get('or_model_select')
+    elif "DeepSeek" in str(p):
+        m = st.session_state.get('ds_model_select')
+    elif "Gemini" in str(p):
+        m = st.session_state.get('gl_model_select')
+    elif "Glama" in str(p):
+        m = st.session_state.get('glama_model_id')
     if p: update_settings(user_id, {"last_provider": p, "last_used_model": m})
+
 
 # --- AI 调用 (通用版 + 动态超时) ---
 # --- AI 调用 (通用版：支持模型覆盖 + 超时豁免) ---
@@ -497,26 +508,26 @@ def ai_grade_subjective(user_ans, std_ans, question_content):
     """
     if not user_ans or len(user_ans.strip()) < 2:
         return {'score': 0, 'feedback': '未检测到有效作答。'}
-        
+
     prompt = f"""
     【角色】你是一位严谨的会计阅卷老师。
     【任务】请对考生的主观题答案进行评分。
-    
+
     【题目】
     {question_content}
-    
+
     【标准答案】
     {std_ans}
-    
+
     【考生答案】
     {user_ans}
-    
+
     【评分标准】
     1. 满分 100 分。
     2. 核心会计分录、计算结果、关键术语正确即可得分，不纠结文字表述差异。
     3. 如果分录借贷方向反了，直接 0 分。
     4. 如果金额错误但逻辑正确，给 30-50% 分数。
-    
+
     请以纯 JSON 格式返回：
     {{
         "score": 85,
@@ -526,8 +537,9 @@ def ai_grade_subjective(user_ans, std_ans, question_content):
     try:
         # 强制较短超时，避免卡死，评分通常较快
         res = call_ai_universal(prompt, timeout_override=45)
-        clean = res.replace("```json","").replace("```","").strip()
-        s = clean.find('{'); e = clean.rfind('}')+1
+        clean = res.replace("```json", "").replace("```", "").strip()
+        s = clean.find('{');
+        e = clean.rfind('}') + 1
         return json.loads(clean[s:e])
     except Exception as e:
         return {'score': 0, 'feedback': f"AI 阅卷失败: {e}"}
@@ -539,8 +551,11 @@ def fetch_google_models(api_key):
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
         data = requests.get(url, timeout=10).json()
-        return [m['name'].replace("models/", "") for m in data.get('models', []) if "generateContent" in m.get('supportedGenerationMethods', [])]
-    except: return []
+        return [m['name'].replace("models/", "") for m in data.get('models', []) if
+                "generateContent" in m.get('supportedGenerationMethods', [])]
+    except:
+        return []
+
 
 @st.cache_data(ttl=3600)
 def fetch_openrouter_models(api_key):
@@ -550,11 +565,13 @@ def fetch_openrouter_models(api_key):
         if resp.status_code == 200:
             data = resp.json().get('data', [])
             return sorted([
-                {'id': m['id'], 'is_free': (float(m.get('pricing',{}).get('prompt',0))==0) or ':free' in m['id']} 
+                {'id': m['id'], 'is_free': (float(m.get('pricing', {}).get('prompt', 0)) == 0) or ':free' in m['id']}
                 for m in data
             ], key=lambda x: x['id'])
         return []
-    except: return []
+    except:
+        return []
+
 
 # --- 新增：动态获取 Glama 模型列表 ---
 @st.cache_data(ttl=3600)
@@ -567,14 +584,14 @@ def fetch_glama_models(api_key, base_url):
         # Glama 的标准 Base URL 通常是 https://glama.ai/api/gateway/openai/v1
         # 但获取 models 时只需 base_url + /models
         target_url = base_url.rstrip("/") + "/models"
-        
+
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
-        
+
         resp = requests.get(target_url, headers=headers, timeout=10)
-        
+
         if resp.status_code == 200:
             data = resp.json().get('data', [])
             # 提取模型 ID 并排序
@@ -586,15 +603,19 @@ def fetch_glama_models(api_key, base_url):
         print(f"Glama Fetch Exception: {e}")
         return []
 
+
 # --- 数据库 CRUD Helper ---
 def get_subjects():
     return supabase.table("subjects").select("*").execute().data
 
+
 def get_books(sid):
     return supabase.table("books").select("*").eq("subject_id", sid).eq("user_id", user_id).execute().data
 
+
 def get_chapters(book_id):
     return supabase.table("chapters").select("*").eq("book_id", book_id).order("start_page", desc=False).execute().data
+
 
 def save_material_v3(chapter_id, content, uid):
     supabase.table("materials").insert({
@@ -679,6 +700,7 @@ def cleanup_quiz_session():
     for k in core_keys:
         if k in st.session_state:
             del st.session_state[k]
+
 
 # --- 文件解析 (PDF/Docx) ---
 def extract_pdf(file, start=1, end=None, max_pages=50):
@@ -783,11 +805,13 @@ def save_questions_safe(q_list, chapter_id, uid, origin="ai"):
         st.error("💾 题目入库失败，请检查网络或数据格式。")
         return None
 
+
 def extract_docx(file):
     try:
         doc = docx.Document(file)
         return "\n".join([p.text for p in doc.paragraphs])
-    except: return ""
+    except:
+        return ""
 
 
 # --- 🎓 AI 课堂专用辅助函数 (修复版) ---
@@ -866,89 +890,94 @@ def semantic_chunking(text, max_chunk_size=15000):
     if current_chunk: chunks.append(current_chunk)
     return chunks
 
+
 @st.cache_data(show_spinner=False, ttl=3600)
 def get_cached_outline_v2(chapter_id, text_content, uid):
     """
-    [V12.0 终极版] 大纲生成：数据库优先 -> 语义分块 -> Map-Reduce -> 写入数据库
-    保持函数名不变，确保兼容性。
+    [V14.0 高密度版] 全文扫描大纲生成
+    核心修改：移除数量限制，强制要求提取细分知识点（考点/法条/规则），而非章节标题。
     """
     import json
 
-    # 1. 优先查库 (Permanent Storage)
-    # 如果数据库里已经存过大纲，直接拿来用，不用消耗 Token
+    # 1. 优先查库
     try:
-        # 注意：你需要先在 Supabase 执行 SQL: ALTER TABLE chapters ADD COLUMN IF NOT EXISTS outline JSONB;
         db_res = supabase.table("chapters").select("outline").eq("id", chapter_id).execute()
         if db_res.data and db_res.data[0].get('outline'):
-            print("🚀 Hit DB Outline Cache!")
-            return db_res.data[0]['outline']
+            # 如果数据库里存的是旧版的“简略大纲”（少于10个），强制重新生成
+            cached_outline = db_res.data[0]['outline']
+            if len(cached_outline) > 15:
+                print("🚀 Hit DB Outline Cache (Detailed)!")
+                return cached_outline
     except Exception as e:
         print(f"DB Read Error: {e}")
 
-    # 2. 如果数据库没有，开始 AI 生成 (Map-Reduce)
+    # 2. Map-Reduce 生成策略
 
-    # 注入会计知识 Prompt
+    # 注入会计知识 Prompt (强调细颗粒度)
     domain_knowledge = """
-    【领域知识注入】
-    1. 关注《企业会计准则》的最新变化（如收入、租赁、金融工具准则）。
-    2. 识别“实务与理论”的平衡点，关注考纲常考的“确认、计量、记录、报告”环节。
-    3. 能够识别会计分录的借贷逻辑，不要将分录拆散。
+    【会计考点提取标准】
+    1. **拒绝大标题**：不要提取“第一节”、“总论”这种空泛标题。
+    2. **要具体考点**：提取具体的业务规则、法条定性、计算公式名称。
+       - ❌ 错误示范：固定资产
+       - ✅ 正确示范：固定资产的确认条件、固定资产折旧范围、融资租入固定资产的入账价值
+    3. **颗粒度**：细化到“三级标题”或“具体判定规则”层面。
     """
 
-    # A. 语义分块 (依赖前文定义的 semantic_chunking 函数)
+    # A. 语义分块 (保持不变)
     chunks = semantic_chunking(text_content, max_chunk_size=12000)
-
     all_sub_points = []
 
-    # B. Map 阶段 (分块提取)
-    # 使用 st.empty 显示实时进度，让用户知道 AI 没卡死
+    # B. Map 阶段 (分块提取 - 增加提取数量)
     progress_text = st.empty()
 
     for i, chunk in enumerate(chunks):
-        progress_text.caption(f"🤖 AI 正在扫描教材第 {i + 1}/{len(chunks)} 部分...")
+        progress_text.caption(f"🤖 AI 正在挖掘第 {i + 1}/{len(chunks)} 部分的考点（高密度模式）...")
 
         map_prompt = f"""
-        【任务】阅读会计教材片段，提取核心知识点大纲。
+        【任务】你是“中级会计职称”考试的阅卷人。请从片段中挖掘**所有**可能的考点。
         {domain_knowledge}
         【片段内容】...{chunk[:15000]}...
-        【要求】仅返回 JSON 字符串数组，如 ["固定资产确认条件", "折旧方法"]。
+        【要求】
+        1. 尽可能多地提取，不要遗漏细节。
+        2. **每个片段至少提取 15-20 个知识点**。
+        3. 仅返回 JSON 字符串数组。
         """
         try:
-            # 这里复用全局的 call_ai_json
             chunk_res = call_ai_json(map_prompt)
             if isinstance(chunk_res, list):
                 all_sub_points.extend(chunk_res)
         except:
             continue
 
-    progress_text.empty()  # 清除进度提示
+    progress_text.empty()
 
-    # C. Reduce 阶段 (汇总整理)
+    # C. Reduce 阶段 (汇总整理 - 移除数量限制)
     if not all_sub_points:
-        return ["本章概览", "核心考点", "章节总结"]  # 兜底
+        return ["本章概览", "核心考点", "章节总结"]
 
     reduce_prompt = f"""
-    【任务】作为资深会计讲师，请整理以下碎片化的知识点，生成一份逻辑严密的章节大纲。
+    【任务】请整理这份杂乱的会计考点列表，生成一份**详尽的**复习清单。
     {domain_knowledge}
     【碎片列表】{json.dumps(all_sub_points, ensure_ascii=False)}
-    【要求】
-    1. 去重并合并同类项。
-    2. 按会计逻辑排序（定义 -> 确认 -> 计量 -> 记录 -> 报告/披露）。
-    3. 最终只保留 6-10 个一级核心标题。
+    【处理要求】
+    1. **去重保留细节**：合并完全重复的词，但保留不同的侧重点（如“收入确认”和“收入计量”是两个点，都要保留）。
+    2. **逻辑排序**：按照教材的逻辑顺序排列（从前到后）。
+    3. **数量控制**：**不要大幅删减！** 请保留 50-100 个核心考点，越详细越好。
     4. 返回纯 JSON 字符串数组。
     """
 
     final_outline = []
     try:
+        # 为了防止输出截断，这里可以请求长上下文模型，或者不做特别限制依靠 AI 智能
         final_outline = call_ai_json(reduce_prompt)
     except:
         pass
 
     if not final_outline or not isinstance(final_outline, list):
-        final_outline = all_sub_points[:8]  # 再次兜底
+        # 如果汇总失败（可能是太多了），直接返回去重后的原始列表
+        final_outline = list(set(all_sub_points))
 
-    # 3. 存入数据库 (Persistence)
-    # 这样下次刷新页面或换电脑，就不用重新生成了
+    # 3. 存入数据库
     try:
         supabase.table("chapters").update({"outline": final_outline}).eq("id", chapter_id).execute()
     except Exception as e:
@@ -1025,6 +1054,7 @@ def check_if_finished_v2(curr_pos, total_len, outline_coverage):
 
     return False
 
+
 # ==============================================================================
 # 4. 侧边栏与导航 (修复版：统一菜单名称)
 # ==============================================================================
@@ -1034,54 +1064,59 @@ settings = profile.get('settings') or {}
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", width=50)
     st.markdown("### 会计私教 Pro")
-    
+
     # --- AI 设置 (保持不变) ---
-    provs = ["Gemini (官方直连)", "DeepSeek (官方直连)", "OpenRouter (聚合平台)", "Glama (聚合平台)"] # <--- 加在这里
+    provs = ["Gemini (官方直连)", "DeepSeek (官方直连)", "OpenRouter (聚合平台)", "Glama (聚合平台)"]  # <--- 加在这里
     saved_p = settings.get('last_provider')
     idx_p = 0
     if saved_p:
         for i, x in enumerate(provs):
             if saved_p in x: idx_p = i; break
-            
+
     prov = st.selectbox("🧠 AI 大脑", provs, index=idx_p, key="ai_provider_select", on_change=save_ai_pref)
     st.session_state.selected_provider = prov
-    
+
     saved_m = settings.get('last_used_model')
-    
+
     # 1. Gemini
     if "Gemini" in prov:
         opts = fetch_google_models(st.secrets["GOOGLE_API_KEY"]) or ["gemini-1.5-flash"]
         idx_m = opts.index(saved_m) if saved_m in opts else 0
-        st.session_state.google_model_id = st.selectbox("🔌 模型", opts, index=idx_m, key="gl_model_select", on_change=save_ai_pref)
-        
+        st.session_state.google_model_id = st.selectbox("🔌 模型", opts, index=idx_m, key="gl_model_select",
+                                                        on_change=save_ai_pref)
+
     # 2. DeepSeek
     elif "DeepSeek" in prov:
         opts = ["deepseek-chat", "deepseek-reasoner"]
         idx_m = opts.index(saved_m) if saved_m in opts else 0
-        st.session_state.deepseek_model_id = st.selectbox("🔌 模型", opts, index=idx_m, key="ds_model_select", on_change=save_ai_pref)
-        
+        st.session_state.deepseek_model_id = st.selectbox("🔌 模型", opts, index=idx_m, key="ds_model_select",
+                                                          on_change=save_ai_pref)
+
     # 3. OpenRouter
     elif "OpenRouter" in prov:
         # (保持原有的 OpenRouter 代码不变...)
         try:
             all_ms = fetch_openrouter_models(st.secrets["openrouter"]["api_key"])
-            if not all_ms: final_ids = ["google/gemini-2.0-flash-exp:free"]
+            if not all_ms:
+                final_ids = ["google/gemini-2.0-flash-exp:free"]
             else:
                 ft = st.radio("筛选", ["🤑 免费", "🌎 全部"], horizontal=True)
                 subset = [m for m in all_ms if m['is_free']] if "免费" in ft else all_ms
                 final_ids = [m['id'] for m in subset]
                 if not final_ids: final_ids = [m['id'] for m in all_ms]
             idx_m = final_ids.index(saved_m) if saved_m in final_ids else 0
-            st.session_state.openrouter_model_id = st.selectbox("🔌 模型", final_ids, index=idx_m, key="or_model_select", on_change=save_ai_pref)
-        except: st.error("OpenRouter 连接失败")
+            st.session_state.openrouter_model_id = st.selectbox("🔌 模型", final_ids, index=idx_m, key="or_model_select",
+                                                                on_change=save_ai_pref)
+        except:
+            st.error("OpenRouter 连接失败")
 
     # 4. Glama (自动获取模型版)
-# -------------------------------------------------------
+    # -------------------------------------------------------
     # Glama (稳定版：预设列表 + 手动输入)
     # -------------------------------------------------------
     elif "Glama" in prov:
         st.caption("🚀 已启用 Glama 网关加速")
-        
+
         # 1. 定义 Glama 支持的常用模型 (根据官方文档整理)
         glama_presets = [
             "google-vertex/gemini-2.0-flash-exp",  # 👈 加上 google-vertex/ 前缀
@@ -1091,47 +1126,46 @@ with st.sidebar:
             "anthropic/claude-3-5-sonnet",
             "meta-llama/llama-3.1-405b-instruct"
         ]
-        
+
         # 2. 提供切换方式：选常用的 vs 手输冷门的
         input_mode = st.radio("模型选择", ["⚡ 常用模型", "⌨️ 手动输入"], horizontal=True, label_visibility="collapsed")
-        
+
         if "常用" in input_mode:
             # 自动定位上次选的模型
             idx_m = glama_presets.index(saved_m) if saved_m in glama_presets else 0
             st.session_state.glama_model_id = st.selectbox(
-                "🔌 选择模型", 
-                glama_presets, 
-                index=idx_m, 
-                key="glama_list_select", 
+                "🔌 选择模型",
+                glama_presets,
+                index=idx_m,
+                key="glama_list_select",
                 on_change=save_ai_pref
             )
         else:
             st.session_state.glama_model_id = st.text_input(
-                "请输入模型 ID", 
-                value=saved_m or "gemini-2.0-flash-exp", 
+                "请输入模型 ID",
+                value=saved_m or "gemini-2.0-flash-exp",
                 placeholder="例如: google-vertex/gemini-1.5-flash",
                 key="glama_manual_input",
                 on_change=save_ai_pref
             )
             st.caption("提示：可在 Glama 后台查看完整的 Model ID")
 
-    
     # --- 导航菜单 (关键修改点：名字与下方主逻辑严格一致) ---
     # 定义菜单列表
     MENU_OPTIONS = [
         "🏠 仪表盘",
         "📂 智能拆书 & 资料",
         "🎓 AI 课堂 (讲义)",
-        "📝 章节特训",    # 注意：这里去掉了"(刷题)"
+        "📝 章节特训",  # 注意：这里去掉了"(刷题)"
         "⚔️ 全真模考",
         "📊 弱项分析",
         "❌ 错题本",
         "🛠️ 数据管理 & 补录",
         "⚙️ 设置中心"
     ]
-    
+
     menu = st.radio("功能导航", MENU_OPTIONS, label_visibility="collapsed")
-    
+
     # --- 倒计时 ---
     if profile.get('exam_date'):
         try:
@@ -1226,8 +1260,10 @@ if menu == "🏠 仪表盘":
     with c3:
         # 简单计算错题数
         try:
-            err_count = supabase.table("user_answers").select("id", count="exact").eq("user_id", user_id).eq("is_correct", False).execute().count
-        except: err_count = 0
+            err_count = supabase.table("user_answers").select("id", count="exact").eq("user_id", user_id).eq(
+                "is_correct", False).execute().count
+        except:
+            err_count = 0
         st.markdown(f"""
         <div class="css-card">
             <i class="bi bi-bookmark-x-fill stat-icon" style="color:#dc3545"></i>
@@ -2524,23 +2560,25 @@ elif menu == "📝 章节特训":
                 try:
                     q_res = supabase.table("question_bank").select("id").eq("chapter_id", cid).execute().data
                     total_q = len(q_res)
-                    
+
                     mastered_count = 0
                     done_ids = []
                     if total_q > 0:
-                        user_correct = supabase.table("user_answers").select("question_id").eq("user_id", user_id).eq("is_correct", True).execute().data
+                        user_correct = supabase.table("user_answers").select("question_id").eq("user_id", user_id).eq(
+                            "is_correct", True).execute().data
                         chapter_q_ids = set([q['id'] for q in q_res])
                         user_correct_ids = set([a['question_id'] for a in user_correct])
                         mastered_ids = user_correct_ids.intersection(chapter_q_ids)
                         mastered_count = len(mastered_ids)
                         done_ids = list(mastered_ids)
-                    
+
                     prog = mastered_count / total_q if total_q > 0 else 0
                     st.caption(f"📈 掌握进度：{mastered_count} / {total_q} 题")
                     st.progress(prog)
-                    
+
                 except:
-                    total_q = 0; done_ids = []
+                    total_q = 0;
+                    done_ids = []
 
                 st.divider()
 
@@ -2593,7 +2631,8 @@ elif menu == "📝 章节特训":
                         if total_q == 0:
                             st.error("题库为空")
                         else:
-                            qs = supabase.table("question_bank").select("*").eq("chapter_id", cid).limit(50).execute().data
+                            qs = supabase.table("question_bank").select("*").eq("chapter_id", cid).limit(
+                                50).execute().data
                             if qs:
                                 random.shuffle(qs)
                                 st.session_state.quiz_data = qs[:10]
@@ -2601,7 +2640,7 @@ elif menu == "📝 章节特训":
                                 st.session_state.quiz_active = True
                                 st.session_state.js_start_time = int(time.time() * 1000)
                                 st.rerun()
-                    
+
                     # --- 策略 C: AI 出题 ---
                     else:
                         mats = supabase.table("materials").select("content").eq("chapter_id", cid).execute().data
@@ -2627,14 +2666,15 @@ elif menu == "📝 章节特训":
                                 res = call_ai_universal(prompt)
                                 if res:
                                     try:
-                                        clean = res.replace("```json","").replace("```","").strip()
-                                        s = clean.find('['); e = clean.rfind(']')+1
+                                        clean = res.replace("```json", "").replace("```", "").strip()
+                                        s = clean.find('[');
+                                        e = clean.rfind(']') + 1
                                         d = json.loads(clean[s:e])
-                                        
+
                                         # 存入数据库
                                         db_qs = [{
                                             'chapter_id': cid, 'user_id': user_id,
-                                            'type': 'multi' if len(str(x.get('correct_answer','')))>1 else 'single',
+                                            'type': 'multi' if len(str(x.get('correct_answer', ''))) > 1 else 'single',
                                             'content': x['content'],
                                             'options': x['options'],
                                             'correct_answer': x['correct_answer'],
@@ -2643,7 +2683,7 @@ elif menu == "📝 章节特训":
                                             'batch_source': f'AI-{int(time.time())}'
                                         } for x in d]
                                         supabase.table("question_bank").insert(db_qs).execute()
-                                        
+
                                         st.session_state.quiz_data = d
                                         st.session_state.q_idx = 0
                                         st.session_state.quiz_active = True
@@ -2663,7 +2703,7 @@ elif menu == "📝 章节特训":
 
         idx = st.session_state.q_idx
         data_len = len(st.session_state.quiz_data)
-        
+
         if idx >= data_len:
             st.balloons()
             st.success("🎉 本轮练习完成！")
@@ -2672,11 +2712,12 @@ elif menu == "📝 章节特训":
                 st.rerun()
         else:
             q = st.session_state.quiz_data[idx]
-            
+
             # 顶部进度
             st.progress((idx + 1) / data_len)
             c_idx, c_end = st.columns([5, 1])
-            with c_idx: st.caption(f"当前进度：{idx + 1} / {data_len}")
+            with c_idx:
+                st.caption(f"当前进度：{idx + 1} / {data_len}")
             with c_end:
                 if st.button("🏁 结束"):
                     cleanup_quiz_session()  # <--- 调用清理
@@ -2684,7 +2725,7 @@ elif menu == "📝 章节特训":
 
             # 数据解析
             q_text = q.get('content') or q.get('question')
-            q_type = q.get('type', 'single') # single, multi, subjective
+            q_type = q.get('type', 'single')  # single, multi, subjective
             q_opts = q.get('options', [])
             std_ans = q.get('correct_answer') or q.get('answer')
             q_exp = q.get('explanation', '暂无解析')
@@ -2696,7 +2737,7 @@ elif menu == "📝 章节特训":
                 "subjective": ("🧠 主观题", "#9c27b0")
             }
             b_label, b_color = badges.get(q_type, ("未知", "#888"))
-            
+
             st.markdown(f"""
             <div class='css-card'>
                 <div style="margin-bottom:10px">
@@ -2705,7 +2746,7 @@ elif menu == "📝 章节特训":
                 <h4 style="line-height:1.6; white-space: pre-wrap;">{q_text}</h4>
             </div>
             """, unsafe_allow_html=True)
-            
+
             # --- 输入区域 ---
             user_val = ""
             sub_key = f"sub_state_{idx}"
@@ -2715,7 +2756,7 @@ elif menu == "📝 章节特训":
             if q_type == 'subjective':
                 st.info("📝 请在下方输入你的计算过程或分录：")
                 user_val = st.text_area("作答区", height=150, key=f"q_subj_{idx}", disabled=st.session_state[sub_key])
-            
+
             # 2. 客观题渲染
             elif q_type == 'multi':
                 st.caption("请选择所有正确选项（多选）：")
@@ -2726,7 +2767,8 @@ elif menu == "📝 章节特训":
                 user_val = "".join(sorted(selected))
             else:
                 st.caption("请选择唯一正确选项：")
-                sel = st.radio("选项", q_opts, key=f"q_rad_{idx}", disabled=st.session_state[sub_key], label_visibility="collapsed")
+                sel = st.radio("选项", q_opts, key=f"q_rad_{idx}", disabled=st.session_state[sub_key],
+                               label_visibility="collapsed")
                 user_val = sel[0].upper() if sel else ""
 
             # --- 提交按钮 ---
@@ -2771,7 +2813,7 @@ elif menu == "📝 章节特训":
 
                 # B. 客观题：逻辑匹配
                 else:
-                    clean_std = str(std_ans).replace(" ","").replace(",","").upper()
+                    clean_std = str(std_ans).replace(" ", "").replace(",", "").upper()
                     if user_val == clean_std:
                         st.markdown(f"<div class='success-box'>🎉 回答正确！</div>", unsafe_allow_html=True)
                         is_correct_bool = True
@@ -2780,7 +2822,7 @@ elif menu == "📝 章节特训":
                         is_correct_bool = False
                     st.info(f"💡 **解析：** {q_exp}")
 
-                # --- 存库逻辑 (通用) ---
+                    # --- 存库逻辑 (通用) ---
                     # --- 存库逻辑 (V5.1 增强版：含分数与AI评价) ---
                     save_key = f"saved_db_{idx}"  # 利用 idx 生成唯一 Key，防止刷新页面重复插入
 
@@ -2850,7 +2892,7 @@ elif menu == "📝 章节特训":
 # =========================================================
 elif menu == "⚔️ 全真模考":
     st.title("⚔️ 全真模拟考试")
-    
+
     if 'exam_session' not in st.session_state:
         st.session_state.exam_session = None
 
@@ -2858,45 +2900,45 @@ elif menu == "⚔️ 全真模考":
     if not st.session_state.exam_session:
         # ... (省略历史记录和选择科目代码) ...
         if st.button("🚀 生成试卷"):
-             # ... (省略组卷逻辑，假设 final_paper 已生成) ...
-             # 确保 final_paper 里包含了 subjective 类型的题
-             st.session_state.exam_session = {
-                 "paper": final_paper, # List of questions
-                 "answers": {}, 
-                 "submitted": False,
-                 # ... 其他字段
-             }
-             st.rerun()
+            # ... (省略组卷逻辑，假设 final_paper 已生成) ...
+            # 确保 final_paper 里包含了 subjective 类型的题
+            st.session_state.exam_session = {
+                "paper": final_paper,  # List of questions
+                "answers": {},
+                "submitted": False,
+                # ... 其他字段
+            }
+            st.rerun()
 
     # 2. 考试进行中
     elif not st.session_state.exam_session['submitted']:
         session = st.session_state.exam_session
         paper = session['paper']
-        
+
         # ... (倒计时组件略) ...
-        
+
         with st.form("exam_paper_form"):
             for idx, q in enumerate(paper):
-                st.markdown(f"**第 {idx+1} 题**")
-                
+                st.markdown(f"**第 {idx + 1} 题**")
+
                 # 渲染题干
                 st.write(q['content'])
-                
+
                 q_type = q.get('type', 'single')
-                
+
                 # 区分渲染
                 if q_type == 'subjective':
                     st.text_area("请输入答案/分录", key=f"ex_sub_{idx}", height=100)
                     # 注意：Form 里的 text_area 不需要 on_change，提交时会自动获取 session_state
                 elif q_type == 'multi':
                     cols = st.columns(2)
-                    for i, opt in enumerate(q.get('options',[])):
-                        cols[i%2].checkbox(opt, key=f"ex_mul_{idx}_{i}")
+                    for i, opt in enumerate(q.get('options', [])):
+                        cols[i % 2].checkbox(opt, key=f"ex_mul_{idx}_{i}")
                 else:
-                    st.radio("单选", q.get('options',[]), key=f"ex_sin_{idx}")
-                
+                    st.radio("单选", q.get('options', []), key=f"ex_sin_{idx}")
+
                 st.divider()
-            
+
             if st.form_submit_button("🏁 交卷"):
                 # 收集答案
                 for idx, q in enumerate(paper):
@@ -2905,13 +2947,13 @@ elif menu == "⚔️ 全真模考":
                         session['answers'][idx] = st.session_state.get(f"ex_sub_{idx}", "")
                     elif q_type == 'multi':
                         sel = []
-                        for i, opt in enumerate(q.get('options',[])):
+                        for i, opt in enumerate(q.get('options', [])):
                             if st.session_state.get(f"ex_mul_{idx}_{i}"): sel.append(opt[0].upper())
                         session['answers'][idx] = "".join(sorted(sel))
                     else:
                         val = st.session_state.get(f"ex_sin_{idx}")
                         session['answers'][idx] = val[0].upper() if val else ""
-                
+
                 session['submitted'] = True
                 st.rerun()
 
@@ -2920,25 +2962,25 @@ elif menu == "⚔️ 全真模考":
         session = st.session_state.exam_session
         paper = session['paper']
         user_ans_map = session['answers']
-        
+
         # 如果还没出报告，先计算
         if 'report_data' not in session:
             total_score = 0
             detail_report = []
-            
+
             # 创建进度条
             st.info("🤖 AI 正在逐题批改主观题，请稍候...")
             bar = st.progress(0)
-            
+
             for idx, q in enumerate(paper):
                 u_ans = user_ans_map.get(idx, "")
                 q_type = q.get('type', 'single')
                 std_ans = q.get('correct_answer', '')
-                
+
                 item_score = 0
                 is_correct = False
                 feedback = ""
-                
+
                 # 分支 A: 主观题 (调用 AI)
                 if q_type == 'subjective':
                     res = ai_grade_subjective(u_ans, std_ans, q['content'])
@@ -2949,25 +2991,25 @@ elif menu == "⚔️ 全真模考":
                     item_score = (res['score'] / 100) * weight
                     is_correct = (res['score'] >= 60)
                     feedback = res['feedback']
-                
+
                 # 分支 B: 客观题
                 else:
                     weight = 100 / len(paper)
-                    clean_std = str(std_ans).replace(" ","").upper()
+                    clean_std = str(std_ans).replace(" ", "").upper()
                     if u_ans == clean_std:
                         item_score = weight
                         is_correct = True
                     else:
                         item_score = 0
                         is_correct = False
-                
+
                 total_score += item_score
                 detail_report.append({
-                    "q": q, "u_ans": u_ans, "score": item_score, 
+                    "q": q, "u_ans": u_ans, "score": item_score,
                     "is_correct": is_correct, "feedback": feedback
                 })
-                bar.progress((idx+1)/len(paper))
-            
+                bar.progress((idx + 1) / len(paper))
+
             session['report_data'] = detail_report
 
             # === 🔥 新增：模考数据完整闭环入库 ===
@@ -3020,17 +3062,17 @@ elif menu == "⚔️ 全真模考":
         final_score = session['final_score']
         st.balloons()
         st.markdown(f"# 🏆 最终得分：{final_score}")
-        
+
         for idx, item in enumerate(session['report_data']):
             q = item['q']
             status = "✅" if item['is_correct'] else "❌"
-            with st.expander(f"第 {idx+1} 题 {status} (得分: {item['score']:.1f})"):
+            with st.expander(f"第 {idx + 1} 题 {status} (得分: {item['score']:.1f})"):
                 st.write(q['content'])
                 st.markdown(f"**你的答案：**\n{item['u_ans']}")
                 st.markdown(f"**参考答案：**\n{q['correct_answer']}")
                 if item['feedback']:
                     st.info(f"AI 点评：{item['feedback']}")
-                    
+
         if st.button("退出"):
             st.session_state.exam_session = None
             st.rerun()
@@ -3044,15 +3086,20 @@ elif menu == "📊 弱项分析":
             df = pd.DataFrame(rows)
             c1, c2 = st.columns(2)
             with c1:
-                st.markdown(f"<div class='css-card'>总刷题<div class='stat-value'>{len(df)}</div></div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='css-card'>总刷题<div class='stat-value'>{len(df)}</div></div>",
+                            unsafe_allow_html=True)
             with c2:
-                ok = len(df[df['is_correct']==True])
-                st.markdown(f"<div class='css-card'>正确率<div class='stat-value'>{int(ok/len(df)*100)}%</div></div>", unsafe_allow_html=True)
-            
+                ok = len(df[df['is_correct'] == True])
+                st.markdown(
+                    f"<div class='css-card'>正确率<div class='stat-value'>{int(ok / len(df) * 100)}%</div></div>",
+                    unsafe_allow_html=True)
+
             fig = px.pie(df, names='is_correct', title='正确率分布', color_discrete_sequence=['#00C090', '#FF7043'])
             st.plotly_chart(fig)
-        else: st.info("暂无数据")
-    except: st.error("数据加载失败")
+        else:
+            st.info("暂无数据")
+    except:
+        st.error("数据加载失败")
 
 
 # =========================================================
@@ -3722,17 +3769,17 @@ elif menu == "🛠️ 数据管理 & 补录":
 # =========================================================
 elif menu == "⚙️ 设置中心":
     st.title("⚙️ 系统设置")
-    
+
     # 1. 读取云端配置 (核心修复)
     # 必须先从 profile 里读出来，否则滑块永远是默认值
     current_settings = profile.get('settings') or {}
-    saved_timeout = current_settings.get('ai_timeout', 60) # 读不到就默认60
-    
+    saved_timeout = current_settings.get('ai_timeout', 60)  # 读不到就默认60
+
     # --- A. AI 模型参数 ---
     st.markdown("#### 🤖 AI 参数配置")
-    
+
     col_test, col_set = st.columns([1, 2])
-    
+
     with col_test:
         st.info(f"当前通道：**{st.session_state.get('selected_provider')}**")
         # 连通性测试功能
@@ -3741,7 +3788,7 @@ elif menu == "⚙️ 设置中心":
                 start_t = time.time()
                 res = call_ai_universal("Say 'OK' in one word.", timeout_override=10)
                 cost_t = time.time() - start_t
-                
+
                 if "Error" in res or "异常" in res:
                     st.error(f"❌ 失败: {res}")
                 else:
@@ -3751,27 +3798,27 @@ elif menu == "⚙️ 设置中心":
     with col_set:
         # 修复：value 设置为 saved_timeout (从数据库读)
         new_timeout = st.slider(
-            "⏳ AI 回答超时限制 (秒)", 
-            min_value=10, 
-            max_value=300, 
-            value=saved_timeout, 
+            "⏳ AI 回答超时限制 (秒)",
+            min_value=10,
+            max_value=300,
+            value=saved_timeout,
             help="如果是生成整章讲义或全量入库，建议调大此值 (如 120秒)"
         )
-        
+
         if st.button("💾 保存参数"):
             if new_timeout != saved_timeout:
                 update_settings(user_id, {"ai_timeout": new_timeout})
                 st.success(f"已保存！超时限制改为 {new_timeout} 秒")
                 time.sleep(1)
-                st.rerun() # 强制刷新页面，让变量生效
+                st.rerun()  # 强制刷新页面，让变量生效
             else:
                 st.info("配置未变更")
 
     st.divider()
-    
+
     # --- B. 考试时间设置 (保留联网功能) ---
     st.markdown("#### 📅 考试倒计时")
-    
+
     # 自动同步
     if st.button("🌐 联网推测 2025 考试日期 (AI)"):
         with st.spinner("正在分析历史考情..."):
@@ -3782,7 +3829,7 @@ elif menu == "⚙️ 设置中心":
                 clean_d = ai_date.strip()[:10]
                 # 简单校验格式
                 datetime.datetime.strptime(clean_d, '%Y-%m-%d')
-                
+
                 supabase.table("study_profile").update({"exam_date": clean_d}).eq("user_id", user_id).execute()
                 st.success(f"已更新为: {clean_d}")
                 time.sleep(1)
@@ -3793,9 +3840,11 @@ elif menu == "⚙️ 设置中心":
     # 手动设置
     curr_date = datetime.date(2025, 9, 6)
     if profile.get('exam_date'):
-        try: curr_date = datetime.datetime.strptime(profile['exam_date'], '%Y-%m-%d').date()
-        except: pass
-        
+        try:
+            curr_date = datetime.datetime.strptime(profile['exam_date'], '%Y-%m-%d').date()
+        except:
+            pass
+
     set_date = st.date_input("手动设定目标日期", curr_date)
     if set_date != curr_date:
         supabase.table("study_profile").update({"exam_date": str(set_date)}).eq("user_id", user_id).execute()
@@ -3804,7 +3853,7 @@ elif menu == "⚙️ 设置中心":
         st.rerun()
 
     st.divider()
-    
+
     # --- C. 危险区域 ---
     with st.expander("🗑️ 危险操作 (数据清理)"):
         c_del1, c_del2 = st.columns(2)
@@ -3812,10 +3861,9 @@ elif menu == "⚙️ 设置中心":
             if st.button("清空所有错题记录"):
                 supabase.table("user_answers").delete().eq("user_id", user_id).execute()
                 st.success("错题本已清空")
-                
+
         with c_del2:
             if st.button("清空所有书籍资料"):
                 supabase.table("books").delete().eq("user_id", user_id).execute()
                 # 因为设置了级联删除(Cascade)，章节、题目、内容会自动删除
                 st.success("资料库已格式化")
-
