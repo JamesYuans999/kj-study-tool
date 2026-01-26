@@ -1914,7 +1914,7 @@ elif menu == "📂 智能拆书 & 资料":
                         st.toast("书籍已删除")
                         time.sleep(1)
                         st.rerun()
-                        except Exception as e:
+                    except Exception as e:
                         st.error(f"删除操作遇到问题: {e}")
 
             # 书籍重命名/转科设置
