@@ -2615,16 +2615,10 @@ elif menu == "📝 章节特训":
 
                 # 🔥 修改点 A：点击“开始练习”时清理旧数据
                 if st.button("🚀 开始练习", type="primary", use_container_width=True):
+
                     # 1. 先彻底清理旧缓存
                     cleanup_quiz_session()
-                    clean_book = sel_b_label.split(' (ID:')[0]
-                    clean_chap = sel_c_label.split(' (ID:')[0]
 
-                    st.session_state.quiz_context = {
-                        "subject": s_name,
-                        "book": clean_book,
-                        "chapter": clean_chap
-                    }
                     # --- 策略 A: 消灭库存 ---
                     if "消灭" in mode:
                         if total_q == 0:
@@ -2741,11 +2735,41 @@ elif menu == "📝 章节特训":
 
         q = st.session_state.quiz_data[idx]
 
+        # === 顶部信息展示（新增） ===
+        try:
+            # 重新获取当前的 cid，方便取数据
+            if 'cid' not in locals():  # 避免重复获取
+                subjects = get_subjects()
+                s_name = next(
+                    (s['name'] for s in subjects if str(s['id']) == str(st.session_state.get('selected_subject_id'))),
+                    "未知科目")
+                books = get_books(st.session_state.get('selected_subject_id'))
+                book_name = next(
+                    (b['title'] for b in books if str(b['id']) == str(st.session_state.get('selected_book_id'))),
+                    "未知书籍")
+                chapters = get_chapters(st.session_state.get('selected_book_id'))
+                c_name = next(
+                    (c['title'] for c in chapters if str(c['id']) == str(st.session_state.get('selected_chapter_id'))),
+                    "未知章节")
+            st.markdown(f"""
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 10px;">
+                    <div style="font-weight: bold; font-size: 1.2rem;">
+                        {s_name}  >  {book_name}  >  {c_name}
+                    </div>
+                    <div style="text-align:right;">
+                        当前进度： {idx + 1} / {data_len}
+                    </div>
+                </div>
+                <hr style="margin: 5px 0;">
+            """, unsafe_allow_html=True)
+        except:
+            st.warning("无法获取科目/书籍/章节信息")
+
         # 顶部进度
         st.progress((idx + 1) / data_len)
         c_idx, c_end = st.columns([5, 1])
         with c_idx:
-            st.caption(f"当前进度：{idx + 1} / {data_len}")
+            st.caption("")  # 去掉重复的进度文字
         with c_end:
             if st.button("🏁 结束"):
                 cleanup_quiz_session()
@@ -2891,7 +2915,7 @@ elif menu == "📝 章节特训":
                 except Exception as e:
                     print(f"存库失败: {e}")
 
-        # --- 底部导航栏 (修改点：增加上一题) ---
+        # --- 底部导航栏 (保持不变) ---
         st.divider()
         col_prev, col_next = st.columns([1, 1])
 
