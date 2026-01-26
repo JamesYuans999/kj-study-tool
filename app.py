@@ -2718,193 +2718,198 @@ elif menu == "📝 章节特训":
         else:
             st.warning("请先去【资料库】初始化科目和上传书籍")
 
-        # --- 3. 做题交互界面 ---
-        if st.session_state.get('quiz_active'):
-            # === 🛡️ 安全检查 ===
-            if 'q_idx' not in st.session_state or 'quiz_data' not in st.session_state:
-                st.session_state.quiz_active = False
+    # --- 3. 做题交互界面 ---
+    if st.session_state.get('quiz_active'):
+        # === 🛡️ 安全检查 ===
+        if 'q_idx' not in st.session_state or 'quiz_data' not in st.session_state:
+            st.session_state.quiz_active = False
+            st.rerun()
+
+        idx = st.session_state.q_idx
+        data_len = len(st.session_state.quiz_data)
+
+        # 边界保护
+        if idx < 0: idx = 0
+        if idx >= data_len: idx = data_len - 1
+
+        q = st.session_state.quiz_data[idx]
+
+        # 顶部进度
+        st.progress((idx + 1) / data_len)
+        c_idx, c_end = st.columns([5, 1])
+        with c_idx:
+            st.caption(f"当前进度：{idx + 1} / {data_len}")
+        with c_end:
+            if st.button("🏁 结束"):
+                cleanup_quiz_session()
                 st.rerun()
 
-            idx = st.session_state.q_idx
-            data_len = len(st.session_state.quiz_data)
+        # 数据解析
+        q_text = q.get('content') or q.get('question')
+        q_type = q.get('type', 'single')
+        q_opts = q.get('options', [])
+        std_ans = q.get('correct_answer') or q.get('answer')
+        q_exp = q.get('explanation', '暂无解析')
 
-            # 获取当前题目
-            q = st.session_state.quiz_data[idx]
+        # 徽章显示
+        badges = {
+            "single": ("单选题", "#00C090"),
+            "multi": ("多选题", "#ff9800"),
+            "subjective": ("🧠 主观题", "#9c27b0"),
+            "judgment": ("判断题", "#2196F3")  # 补充判断题样式
+        }
+        b_label, b_color = badges.get(q_type, ("未知", "#888"))
 
-            # --- 顶部进度条与结束按钮 ---
-            st.progress((idx + 1) / data_len)
-            c_idx, c_end = st.columns([5, 1])
-            with c_idx:
-                st.caption(f"当前进度：{idx + 1} / {data_len}")
-            with c_end:
-                if st.button("🏁 退出"):
-                    cleanup_quiz_session()
-                    st.rerun()
-
-            # --- 题目卡片渲染 ---
-            q_text = q.get('content') or q.get('question')
-            q_type = q.get('type', 'single')
-            q_opts = q.get('options', [])
-            std_ans = q.get('correct_answer') or q.get('answer')
-            q_exp = q.get('explanation', '暂无解析')
-
-            # 徽章显示
-            badges = {
-                "single": ("单选题", "#00C090"),
-                "multi": ("多选题", "#ff9800"),
-                "subjective": ("🧠 主观题", "#9c27b0")
-            }
-            b_label, b_color = badges.get(q_type, ("未知", "#888"))
-
-            st.markdown(f"""
-            <div class='css-card'>
-                <div style="margin-bottom:10px">
-                    <span style='background:{b_color};color:white;padding:2px 8px;border-radius:4px;font-size:12px'>{b_label}</span>
-                </div>
-                <h4 style="line-height:1.6; white-space: pre-wrap;">{q_text}</h4>
+        st.markdown(f"""
+        <div class='css-card'>
+            <div style="margin-bottom:10px">
+                <span style='background:{b_color};color:white;padding:2px 8px;border-radius:4px;font-size:12px'>{b_label}</span>
             </div>
-            """, unsafe_allow_html=True)
+            <h4 style="line-height:1.6; white-space: pre-wrap;">{q_text}</h4>
+        </div>
+        """, unsafe_allow_html=True)
 
-            # --- 用户作答区域 ---
-            sub_key = f"sub_state_{idx}"  # 题目提交状态锁
-            if sub_key not in st.session_state: st.session_state[sub_key] = False
+        # --- 输入区域 ---
+        user_val = ""
+        sub_key = f"sub_state_{idx}"
+        if sub_key not in st.session_state: st.session_state[sub_key] = False
 
-            user_val = ""
+        # 1. 主观题渲染
+        if q_type == 'subjective':
+            st.info("📝 请在下方输入你的计算过程或分录：")
+            user_val = st.text_area("作答区", height=150, key=f"q_subj_{idx}", disabled=st.session_state[sub_key])
 
-            # A. 主观题
-            if q_type == 'subjective':
-                st.info("📝 请在下方输入你的计算过程或分录：")
-                user_val = st.text_area("作答区", height=150, key=f"q_subj_{idx}", disabled=st.session_state[sub_key])
+        # 2. 客观题渲染
+        elif q_type == 'multi':
+            st.caption("请选择所有正确选项（多选）：")
+            selected = []
+            for opt in q_opts:
+                if st.checkbox(opt, key=f"q_{idx}_{opt}", disabled=st.session_state[sub_key]):
+                    selected.append(opt[0].upper())
+            user_val = "".join(sorted(selected))
+        else:
+            # 单选或判断
+            st.caption("请选择唯一正确选项：")
+            # 处理判断题选项
+            if q_type == 'judgment' and not q_opts:
+                q_opts = ["A. 正确", "B. 错误"]
 
-            # B. 多选题
-            elif q_type == 'multi':
-                st.caption("请选择所有正确选项（多选）：")
-                selected = []
-                for opt in q_opts:
-                    # 选项状态回显
-                    if st.checkbox(opt, key=f"q_{idx}_{opt}", disabled=st.session_state[sub_key]):
-                        selected.append(opt[0].upper())
-                user_val = "".join(sorted(selected))
+            sel = st.radio("选项", q_opts, key=f"q_rad_{idx}", disabled=st.session_state[sub_key],
+                           label_visibility="collapsed")
+            user_val = sel[0].upper() if sel else ""
 
-            # C. 单选题
+        # --- 提交按钮 ---
+        if st.button("✅ 提交答案", use_container_width=True, key=f"btn_sub_{idx}") and not st.session_state[sub_key]:
+            if not user_val:
+                st.toast("⚠️ 请先作答再提交")
             else:
-                st.caption("请选择唯一正确选项：")
-                # 这里的 index=None 初始不选中，或者恢复上次选的状态（略复杂，暂保持默认）
-                sel = st.radio("选项", q_opts, key=f"q_rad_{idx}", disabled=st.session_state[sub_key],
-                               label_visibility="collapsed")
-                user_val = sel[0].upper() if sel else ""
+                st.session_state[sub_key] = True
+                st.rerun()
 
-            # --- 提交按钮 ---
-            # 只有未提交时才显示提交按钮
-            if not st.session_state[sub_key]:
-                if st.button("✅ 提交答案", use_container_width=True):
-                    st.session_state[sub_key] = True
-                    st.rerun()
+        # --- 判分与反馈 (已提交状态) ---
+        if st.session_state[sub_key]:
+            is_correct_bool = False
+            ai_feedback = ""
 
-            # --- 结果反馈区域 ---
-            if st.session_state[sub_key]:
-                st.divider()
-                is_correct_bool = False
+            # A. 主观题：AI 评分
+            if q_type == 'subjective':
+                with st.spinner("🤖 AI 阅卷老师正在批改你的答案..."):
+                    grade_key = f"grade_res_{idx}"
+                    if grade_key not in st.session_state:
+                        grade_res = ai_grade_subjective(user_val, std_ans, q_text)
+                        st.session_state[grade_key] = grade_res
 
-                # 1. 主观题判分逻辑
-                if q_type == 'subjective':
-                    with st.spinner("🤖 AI 阅卷老师正在批改..."):
-                        grade_key = f"grade_res_{idx}"
-                        if grade_key not in st.session_state:
-                            grade_res = ai_grade_subjective(user_val, std_ans, q_text)
-                            st.session_state[grade_key] = grade_res
+                    res = st.session_state[grade_key]
+                    score = res.get('score', 0)
+                    ai_feedback = res.get('feedback', '')
+                    is_correct_bool = (score >= 60)
 
-                        res = st.session_state[grade_key]
-                        score = res.get('score', 0)
-                        ai_feedback = res.get('feedback', '')
-                        is_correct_bool = (score >= 60)
-
-                        color = "#00C090" if score >= 80 else ("#ff9800" if score >= 60 else "#dc3545")
-                        st.markdown(f"""
+                    color = "#00C090" if score >= 80 else ("#ff9800" if score >= 60 else "#dc3545")
+                    st.markdown(f"""
                             <div style="padding:15px; background:{color}20; border-left:5px solid {color}; border-radius:5px; margin:10px 0;">
                                 <h3 style="color:{color}; margin:0">得分：{score} / 100</h3>
                                 <p style="margin-top:5px"><b>👩‍🏫 点评：</b>{ai_feedback}</p>
                             </div>
-                        """, unsafe_allow_html=True)
+                            """, unsafe_allow_html=True)
 
-                        with st.expander("🔍 查看参考答案"):
-                            st.code(std_ans, language="markdown")
+                    # 主观题始终显示参考答案
+                    with st.expander("📘 查看参考答案"):
+                        st.code(std_ans, language="markdown")
 
-                # 2. 客观题判分逻辑 (修改重点)
+            # B. 客观题：逻辑匹配
+            else:
+                clean_std = str(std_ans).replace(" ", "").replace(",", "").upper()
+                if user_val == clean_std:
+                    # 🟢 修改点：做对了也有提示，并引导看解析
+                    st.success("🎉 回答正确！")
+                    st.caption("⚡ 是蒙的还是会的？点下方解析确认一下 👇")
+                    is_correct_bool = True
                 else:
-                    clean_std = str(std_ans).replace(" ", "").replace(",", "").upper()
+                    st.error(f"❌ 遗憾答错。你的答案：{user_val}")
+                    is_correct_bool = False
 
-                    # --- 回答正确 ---
-                    if user_val == clean_std:
-                        is_correct_bool = True
-                        # 只给一个简单的成功提示
-                        st.markdown(f"<div class='success-box'>🎉 回答正确！</div>", unsafe_allow_html=True)
+                # 🟢 修改点：统一放入 Expander，由用户手动展开
+                with st.expander("🔍 查看解析 / 参考答案", expanded=not is_correct_bool):
+                    if not is_correct_bool:
+                        st.markdown(f"**✅ 正确答案：** `{clean_std}`")
+                    st.markdown("---")
+                    st.write(f"**📖 解析：**\n{q_exp}")
 
-                        # 💡 改进点：即使做对了，也提供一个按钮查看解析（防止蒙对）
-                        with st.expander("👀 我做对了，但我想看解析/核对 (防止蒙对)"):
-                            st.markdown(f"**正确答案：** `{clean_std}`")
-                            st.info(f"💡 **解析：** {q_exp}")
-
-                    # --- 回答错误 ---
-                    else:
-                        is_correct_bool = False
-                        st.error(f"❌ 遗憾答错。")
-                        # 做错了直接显示答案和解析
-                        st.markdown(f"**正确答案是：** `{clean_std}`")
-                        st.info(f"💡 **解析：** {q_exp}")
-
-                # --- 存库逻辑 (保持不变) ---
-                save_key = f"saved_db_{idx}"
-                if save_key not in st.session_state and q.get('id'):
-                    try:
+            # --- 存库逻辑 (保持不变) ---
+            save_key = f"saved_db_{idx}"
+            if save_key not in st.session_state:
+                try:
+                    qid = q.get('id')
+                    if qid:
                         final_score = 0
                         final_feedback = ""
                         if q_type == 'subjective':
-                            g = st.session_state.get(f"grade_res_{idx}", {})
-                            final_score = float(g.get('score', 0))
-                            final_feedback = str(g.get('feedback', ''))
+                            grade_data = st.session_state.get(f"grade_res_{idx}", {})
+                            final_score = float(grade_data.get('score', 0))
+                            final_feedback = str(grade_data.get('feedback', ''))
                         else:
                             final_score = 100.0 if is_correct_bool else 0.0
 
-                        supabase.table("user_answers").insert({
+                        payload = {
                             "user_id": user_id,
-                            "question_id": q.get('id'),
+                            "question_id": qid,
                             "user_response": user_val,
                             "is_correct": is_correct_bool,
                             "score": final_score,
                             "ai_feedback": final_feedback,
                             "exam_id": None
-                        }).execute()
+                        }
+                        supabase.table("user_answers").insert(payload).execute()
                         st.session_state[save_key] = True
-                    except Exception as e:
-                        print(f"Save Error: {e}")
+                except Exception as e:
+                    print(f"存库失败: {e}")
 
-            st.markdown("---")
+        # --- 底部导航栏 (修改点：增加上一题) ---
+        st.divider()
+        col_prev, col_next = st.columns([1, 1])
 
-            # --- 底部导航栏 (新增：上一题) ---
-            c_prev, c_next = st.columns([1, 1])
+        with col_prev:
+            # 上一题按钮
+            if idx > 0:
+                if st.button("⬅️ 上一题", use_container_width=True):
+                    st.session_state.q_idx -= 1
+                    st.rerun()
+            else:
+                st.button("🚫 已是第一题", disabled=True, use_container_width=True)
 
-            # ⬅️ 上一题按钮
-            with c_prev:
-                if idx > 0:
-                    if st.button("⬅️ 上一题", use_container_width=True):
-                        st.session_state.q_idx -= 1
-                        st.rerun()
-
-            # ➡️ 下一题按钮
-            with c_next:
-                if idx < data_len - 1:
-                    if st.button("➡️ 下一题", type="primary", use_container_width=True):
-                        st.session_state.q_idx += 1
-                        st.rerun()
-                else:
-                    # 最后一题显示完成
-                    if st.button("🎉 完成本章练习", type="primary", use_container_width=True):
-                        st.balloons()
-                        st.success("🎉 恭喜完成！")
-                        time.sleep(1.5)
-                        cleanup_quiz_session()
-                        st.rerun()
+        with col_next:
+            # 下一题按钮
+            if idx < data_len - 1:
+                if st.button("➡️ 下一题", type="primary", use_container_width=True):
+                    st.session_state.q_idx += 1
+                    st.rerun()
+            else:
+                if st.button("🏁 完成练习", type="primary", use_container_width=True):
+                    st.balloons()
+                    st.success("🎉 本轮练习全部完成！")
+                    cleanup_quiz_session()
+                    st.session_state.quiz_active = False
+                    st.rerun()
 
 
 # =========================================================
