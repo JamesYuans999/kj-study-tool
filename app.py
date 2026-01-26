@@ -2617,7 +2617,14 @@ elif menu == "📝 章节特训":
                 if st.button("🚀 开始练习", type="primary", use_container_width=True):
                     # 1. 先彻底清理旧缓存
                     cleanup_quiz_session()
+                    clean_book = sel_b_label.split(' (ID:')[0]
+                    clean_chap = sel_c_label.split(' (ID:')[0]
 
+                    st.session_state.quiz_context = {
+                        "subject": s_name,
+                        "book": clean_book,
+                        "chapter": clean_chap
+                    }
                     # --- 策略 A: 消灭库存 ---
                     if "消灭" in mode:
                         if total_q == 0:
