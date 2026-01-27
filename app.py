@@ -624,28 +624,35 @@ def save_material_v3(chapter_id, content, uid):
 
 # --- 收藏/标记功能辅助函数 ---
 def toggle_mark_status(uid, qid):
-    """切换题目的收藏状态"""
+    """切换收藏状态，返回 (success, is_marked, error_msg)"""
     try:
-        # 检查是否已收藏
-        res = supabase.table("question_marks").select("id").eq("user_id", uid).eq("question_id", qid).execute()
-        if res.data:
-            # 已收藏 -> 删除 (取消收藏)
+        qid = int(qid)  # 确保是整数
+
+        # 1. 检查是否存在
+        existing = supabase.table("question_marks").select("id").eq("user_id", uid).eq("question_id", qid).execute()
+
+        if existing.data:
+            # 2. 存在 -> 删除
             supabase.table("question_marks").delete().eq("user_id", uid).eq("question_id", qid).execute()
-            return False # 返回当前状态：未收藏
+            return True, False, None  # 操作成功，当前状态：未收藏
         else:
-            # 未收藏 -> 插入
+            # 3. 不存在 -> 插入
             supabase.table("question_marks").insert({"user_id": uid, "question_id": qid}).execute()
-            return True # 返回当前状态：已收藏
+            return True, True, None  # 操作成功，当前状态：已收藏
+
     except Exception as e:
-        print(f"Mark Error: {e}")
-        return False
+        # 返回详细错误信息
+        return False, False, str(e)
 
 def get_mark_status(uid, qid):
     """查询题目是否已收藏"""
     try:
+        # 强制转换 qid 为 int，防止类型不匹配
+        qid = int(qid)
         res = supabase.table("question_marks").select("id").eq("user_id", uid).eq("question_id", qid).execute()
         return len(res.data) > 0
-    except:
+    except Exception as e:
+        # 静默失败，默认未收藏
         return False
 
 def save_questions_v3(q_list, chapter_id, uid, origin="ai"):
@@ -2787,25 +2794,39 @@ elif menu == "📝 章节特训":
         b_label, b_color = badges.get(q_type, ("未知", "#888"))
 
         # --- ⭐ 收藏/标记按钮区域 ---
-        curr_qid = q.get('id')  # 确保题目已入库才有ID
+        curr_qid = q.get('id')
         if curr_qid:
-            # 实时查询收藏状态
+            # 1. 获取当前状态
             is_marked = get_mark_status(user_id, curr_qid)
-            btn_label = "★ 已标记为重点" if is_marked else "☆ 标记为易错/重点"
-            btn_type = "primary" if is_marked else "secondary"
 
-            # 🔄 修改点：将列布局改为 [1.5, 4]，并且在第一个列(c_mark_btn)放置按钮
-            c_mark_btn, c_mark_void = st.columns([1.5, 4])
+            # 2. 设置按钮样式
+            if is_marked:
+                btn_label = "★ 已标记 (点击取消)"
+                btn_type = "primary"  # 红色/高亮
+                btn_help = "此题已加入重点本"
+            else:
+                btn_label = "☆ 加入重点本"
+                btn_type = "secondary"  # 灰色/普通
+                btn_help = "点击将此题加入复习列表"
 
+            # 3. 布局 (左侧按钮)
+            c_mark_btn, c_mark_void = st.columns([2, 4])
             with c_mark_btn:
-                if st.button(btn_label, key=f"mark_btn_{idx}", type=btn_type, use_container_width=True):
-                    new_state = toggle_mark_status(user_id, curr_qid)
-                    if new_state:
-                        st.toast("已加入【重点易错本】")
+                if st.button(btn_label, key=f"mark_btn_{idx}", type=btn_type, help=btn_help, use_container_width=True):
+                    # 执行切换
+                    success, new_state, err_msg = toggle_mark_status(user_id, curr_qid)
+
+                    if success:
+                        if new_state:
+                            st.toast("✅ 已成功加入【重点/易错本】！")
+                        else:
+                            st.toast("🗑️ 已取消标记")
+                        time.sleep(0.5)
+                        st.rerun()  # 刷新页面以更新按钮状态
                     else:
-                        st.toast("已取消标记")
-                    time.sleep(0.5)
-                    st.rerun()
+                        # 🔴 如果出错，显示红色错误框
+                        st.error(f"操作失败，数据库报错：{err_msg}")
+                        st.caption("请检查 Supabase 的 question_marks 表是否存在，以及 qid 是否正确。")
         # ---------------------------
 
 
