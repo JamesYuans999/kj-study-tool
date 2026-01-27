@@ -622,6 +622,31 @@ def save_material_v3(chapter_id, content, uid):
         "chapter_id": chapter_id, "content": content, "user_id": uid
     }).execute()
 
+# --- 收藏/标记功能辅助函数 ---
+def toggle_mark_status(uid, qid):
+    """切换题目的收藏状态"""
+    try:
+        # 检查是否已收藏
+        res = supabase.table("question_marks").select("id").eq("user_id", uid).eq("question_id", qid).execute()
+        if res.data:
+            # 已收藏 -> 删除 (取消收藏)
+            supabase.table("question_marks").delete().eq("user_id", uid).eq("question_id", qid).execute()
+            return False # 返回当前状态：未收藏
+        else:
+            # 未收藏 -> 插入
+            supabase.table("question_marks").insert({"user_id": uid, "question_id": qid}).execute()
+            return True # 返回当前状态：已收藏
+    except Exception as e:
+        print(f"Mark Error: {e}")
+        return False
+
+def get_mark_status(uid, qid):
+    """查询题目是否已收藏"""
+    try:
+        res = supabase.table("question_marks").select("id").eq("user_id", uid).eq("question_id", qid).execute()
+        return len(res.data) > 0
+    except:
+        return False
 
 def save_questions_v3(q_list, chapter_id, uid, origin="ai"):
     """
@@ -1181,6 +1206,7 @@ with st.sidebar:
         "📂 智能拆书 & 资料",
         "🎓 AI 课堂 (讲义)",
         "📝 章节特训",  # 注意：这里去掉了"(刷题)"
+        "⭐ 重点/易错本",
         "⚔️ 全真模考",
         "📊 弱项分析",
         "❌ 错题本",
@@ -2760,6 +2786,28 @@ elif menu == "📝 章节特训":
         }
         b_label, b_color = badges.get(q_type, ("未知", "#888"))
 
+        # --- ⭐ 收藏/标记按钮区域 ---
+        curr_qid = q.get('id')  # 确保题目已入库才有ID
+        if curr_qid:
+            # 实时查询收藏状态
+            is_marked = get_mark_status(user_id, curr_qid)
+            btn_label = "★ 已标记为重点" if is_marked else "☆ 标记为易错/重点"
+            btn_type = "primary" if is_marked else "secondary"
+
+            # 使用列布局将按钮放在右侧
+            c_mark_void, c_mark_btn = st.columns([4, 1.5])
+            with c_mark_btn:
+                if st.button(btn_label, key=f"mark_btn_{idx}", type=btn_type, use_container_width=True):
+                    new_state = toggle_mark_status(user_id, curr_qid)
+                    if new_state:
+                        st.toast("已加入【重点易错本】")
+                    else:
+                        st.toast("已取消标记")
+                    time.sleep(0.5)
+                    st.rerun()
+        # ---------------------------
+
+
         st.markdown(f"""
         <div class='css-card'>
             <div style="margin-bottom:10px">
@@ -2905,6 +2953,139 @@ elif menu == "📝 章节特训":
                     st.session_state.quiz_active = False
                     st.rerun()
 
+# =========================================================
+# ⭐ 重点/易错本 (新功能)
+# =========================================================
+elif menu == "⭐ 重点/易错本":
+    st.title("⭐ 重点 & 易错题复习")
+    st.caption("这里是你手动标记的“高价值”题目。反复打磨，直到彻底掌握。")
+
+    # 1. 筛选器 (Subject -> Book -> Chapter)
+    subjects = get_subjects()
+    if not subjects: st.warning("请先初始化科目"); st.stop()
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        s_name = st.selectbox("科目", ["全部"] + [s['name'] for s in subjects])
+
+    # 构建查询
+    query = supabase.table("question_marks").select("*, question_bank!inner(*, chapters!inner(*, books!inner(*)))").eq(
+        "user_id", user_id).order("created_at", desc=True)
+
+    # 简单的客户端过滤逻辑 (Supabase 级联过滤比较复杂，这里先拉取再过滤，适合中小数据量)
+    # 如果数据量极大，建议改为后端 RPC 过滤
+
+    try:
+        raw_data = query.execute().data
+    except Exception as e:
+        st.error(f"数据加载失败: {e}")
+        raw_data = []
+
+    # 客户端过滤
+    filtered_data = []
+    for item in raw_data:
+        q = item['question_bank']
+        chap = q['chapters']
+        book = chap['books']
+        sub_id = book['subject_id']
+
+        # 科目过滤
+        if s_name != "全部":
+            target_sid = next((s['id'] for s in subjects if s['name'] == s_name), None)
+            if target_sid != sub_id: continue
+
+        filtered_data.append(item)
+
+    if not filtered_data:
+        st.info("📭 暂无收藏的重点题。在“章节特训”或“模考”中点击题目右上角的“☆”即可添加。")
+    else:
+        st.write(f"共筛选出 **{len(filtered_data)}** 道重点题：")
+        st.divider()
+
+        for idx, item in enumerate(filtered_data):
+            mark_id = item['id']
+            q = item['question_bank']
+
+            # 题目元数据
+            chap_title = q['chapters']['title']
+            q_type_map = {"single": "单选", "multi": "多选", "judgment": "判断", "subjective": "主观"}
+            q_label = q_type_map.get(q.get('type'), '未知')
+
+            with st.expander(f"📌 [{q_label}] {q['content'][:40]}... (来源: {chap_title})"):
+
+                # --- A. 题目展示 ---
+                st.markdown(f"#### {q['content']}")
+
+                if q.get('options'):
+                    st.markdown("---")
+                    for opt in q['options']:
+                        st.markdown(f"- {opt}")
+
+                # --- B. 思考与交互 ---
+                # 使用 session_state 控制答案显示，避免直接把答案露出来
+                show_key = f"show_ans_mark_{mark_id}"
+                if show_key not in st.session_state: st.session_state[show_key] = False
+
+                c_act1, c_act2, c_act3 = st.columns([1, 1, 3])
+                with c_act1:
+                    if st.button("👀 看答案", key=f"btn_see_{mark_id}"):
+                        st.session_state[show_key] = not st.session_state[show_key]
+                        st.rerun()
+
+                with c_act2:
+                    if st.button("✅ 已掌握，移除", key=f"btn_rm_{mark_id}"):
+                        supabase.table("question_marks").delete().eq("id", mark_id).execute()
+                        st.toast("已从重点本移除")
+                        time.sleep(0.5)
+                        st.rerun()
+
+                # --- C. 答案与解析区域 ---
+                if st.session_state[show_key]:
+                    st.markdown("---")
+                    st.success(f"**正确答案：** {q['correct_answer']}")
+                    st.info(f"**解析：** {q.get('explanation', '暂无详细解析')}")
+
+                    # --- D. AI 私教 (复用 Chat 逻辑) ---
+                    st.markdown("### 👩‍🏫 AI 随身教")
+                    st.caption("不懂就问，AI 会基于这道题为你答疑解惑。")
+
+                    # 读取历史
+                    chat_history = item.get('chat_history') or []
+
+                    # 展示历史
+                    for i, msg in enumerate(chat_history):
+                        role = "user" if msg['role'] == "user" else "assistant"
+                        with st.chat_message(role):
+                            st.write(msg['content'])
+
+                    # 提问框
+                    user_input = st.chat_input(f"关于这道题的疑问...", key=f"chat_in_{mark_id}")
+                    if user_input:
+                        # 1. 添加用户提问
+                        chat_history.append({"role": "user", "content": user_input})
+
+                        # 2. 调用 AI
+                        # 构建上下文 Prompt
+                        context_prompt = f"""
+                        【当前题目】{q['content']}
+                        【选项】{q.get('options', '无')}
+                        【正确答案】{q['correct_answer']}
+                        【解析】{q.get('explanation', '无')}
+                        【用户问题】{user_input}
+                        请作为会计私教，解答用户的问题。如果用户问为什么选A不选B，请详细分析。
+                        """
+
+                        # 简单的一问一答模式，如果需要连续对话，可以把 chat_history 传进去
+                        # 这里为了简化，我们只传 context_prompt，或者你可以复用 call_ai_universal 的 history 参数
+                        with st.spinner("AI 正在思考..."):
+                            ai_reply = call_ai_universal(context_prompt)  # 也可以传入 history=chat_history[:-1]
+
+                        chat_history.append({"role": "assistant", "content": ai_reply})
+
+                        # 3. 保存回 question_marks 表 (注意是存到 question_marks，不是 user_answers)
+                        supabase.table("question_marks").update({"chat_history": chat_history}).eq("id",
+                                                                                                   mark_id).execute()
+                        st.rerun()
 
 # =========================================================
 # ⚔️ 全真模考 (V6.0: 混合题型 + 批量 AI 阅卷)
