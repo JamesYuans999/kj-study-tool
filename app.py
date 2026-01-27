@@ -2794,8 +2794,9 @@ elif menu == "📝 章节特训":
             btn_label = "★ 已标记为重点" if is_marked else "☆ 标记为易错/重点"
             btn_type = "primary" if is_marked else "secondary"
 
-            # 使用列布局将按钮放在右侧
-            c_mark_void, c_mark_btn = st.columns([4, 1.5])
+            # 🔄 修改点：将列布局改为 [1.5, 4]，并且在第一个列(c_mark_btn)放置按钮
+            c_mark_btn, c_mark_void = st.columns([1.5, 4])
+
             with c_mark_btn:
                 if st.button(btn_label, key=f"mark_btn_{idx}", type=btn_type, use_container_width=True):
                     new_state = toggle_mark_status(user_id, curr_qid)
