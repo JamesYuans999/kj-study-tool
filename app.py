@@ -252,7 +252,47 @@ def update_segment_status(uid, lid, idx, status_type, new_val):
     except Exception as e:
         print(f"Update Error: {e}")
         return False
-    
+
+
+def smart_lecture_segmentation(text, max_chars=400):
+    """
+    智能分段算法：
+    1. 遇到 Markdown 标题 (#) 强制分段
+    2. 普通段落如果过短，会自动合并到上一段，直到超过 max_chars
+    """
+    if not text: return []
+
+    # 先按原始段落切分
+    raw_paragraphs = text.split('\n\n')
+
+    merged_segments = []
+    current_buffer = ""
+
+    for para in raw_paragraphs:
+        para = para.strip()
+        if not para: continue
+
+        # 判断是否是标题 (以 # 开头)
+        is_header = para.startswith('#')
+
+        # 决定是否要“刷新缓冲区”(即生成一个新切片)
+        # 条件：(当前缓冲区有内容) 且 (遇到了新标题 或 缓冲区内容已经够长了)
+        if current_buffer and (is_header or len(current_buffer) > max_chars):
+            merged_segments.append(current_buffer)
+            current_buffer = para
+        else:
+            # 否则进行合并
+            if current_buffer:
+                current_buffer += "\n\n" + para
+            else:
+                current_buffer = para
+
+    # 把最后剩下的内容加进去
+    if current_buffer:
+        merged_segments.append(current_buffer)
+
+    return merged_segments
+
 # --- 辅助函数：完结检测 ---
 def check_if_finished(curr_pos, total_len, outline_coverage):
     # 条件1：物理进度走完
@@ -2181,9 +2221,11 @@ elif menu == "🎓 AI 课堂 (讲义)":
 
                     st.divider()
 
-                    # 2. 内容切片与状态加载
-                    # 按双换行符切割段落 (Markdown通常用双换行分段)
-                    segments = full_content.split('\n\n')
+                    # === 2. 内容切片与状态加载 ===
+                    # 使用智能分段算法，每段大约 300-500 字，或者是独立的标题章节
+                    segments = smart_lecture_segmentation(full_content, max_chars=350)
+
+                    # 获取当前数据库里的状态
                     prog_map = get_lecture_progress(user_id, lid)
 
                     visible_count = 0
