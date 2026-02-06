@@ -218,7 +218,41 @@ def check_outline_coverage(outline, draft_text):
         coverage.append({"title": point, "covered": is_covered})
     return coverage
 
+# --- 🎓 讲义进度管理辅助函数 ---
+def get_lecture_progress(uid, lid):
+    """获取某篇讲义的所有段落状态"""
+    try:
+        # lid 需要转为 int
+        res = supabase.table("lecture_progress").select("*").eq("user_id", uid).eq("lecture_id", int(lid)).execute()
+        progress_map = {}
+        for item in res.data:
+            progress_map[item['segment_index']] = {
+                'read': item.get('is_read', False),
+                'star': item.get('is_star', False)
+            }
+        return progress_map
+    except Exception as e:
+        return {}
 
+
+def update_segment_status(uid, lid, idx, status_type, new_val):
+    """更新某一段的状态"""
+    try:
+        lid = int(lid)
+        existing = supabase.table("lecture_progress").select("id").eq("user_id", uid).eq("lecture_id", lid).eq(
+            "segment_index", idx).execute()
+
+        data = {status_type: new_val, "user_id": uid, "lecture_id": lid, "segment_index": idx}
+
+        if existing.data:
+            supabase.table("lecture_progress").update({status_type: new_val}).eq("id", existing.data[0]['id']).execute()
+        else:
+            supabase.table("lecture_progress").insert(data).execute()
+        return True
+    except Exception as e:
+        print(f"Update Error: {e}")
+        return False
+    
 # --- 辅助函数：完结检测 ---
 def check_if_finished(curr_pos, total_len, outline_coverage):
     # 条件1：物理进度走完
@@ -2051,40 +2085,7 @@ elif menu == "📂 智能拆书 & 资料":
 # =========================================================
 # 🎓 AI 课堂 (讲义) - V10.0 极简交互版 (一键补全+预览优先)
 # =========================================================
-# --- 🎓 讲义进度管理辅助函数 ---
-def get_lecture_progress(uid, lid):
-    """获取某篇讲义的所有段落状态"""
-    try:
-        # lid 需要转为 int
-        res = supabase.table("lecture_progress").select("*").eq("user_id", uid).eq("lecture_id", int(lid)).execute()
-        progress_map = {}
-        for item in res.data:
-            progress_map[item['segment_index']] = {
-                'read': item.get('is_read', False),
-                'star': item.get('is_star', False)
-            }
-        return progress_map
-    except Exception as e:
-        return {}
 
-
-def update_segment_status(uid, lid, idx, status_type, new_val):
-    """更新某一段的状态"""
-    try:
-        lid = int(lid)
-        existing = supabase.table("lecture_progress").select("id").eq("user_id", uid).eq("lecture_id", lid).eq(
-            "segment_index", idx).execute()
-
-        data = {status_type: new_val, "user_id": uid, "lecture_id": lid, "segment_index": idx}
-
-        if existing.data:
-            supabase.table("lecture_progress").update({status_type: new_val}).eq("id", existing.data[0]['id']).execute()
-        else:
-            supabase.table("lecture_progress").insert(data).execute()
-        return True
-    except Exception as e:
-        print(f"Update Error: {e}")
-        return False
 elif menu == "🎓 AI 课堂 (讲义)":
     st.title("🎓 AI 深度课堂")
     st.caption("分步生成长篇讲义，支持断点续写、深度问答与实时编辑。")
