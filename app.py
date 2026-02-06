@@ -2262,13 +2262,7 @@ elif menu == "🎓 AI 课堂 (讲义)":
                         # --- 渲染卡片 ---
                         with st.container():
                             # 自定义 HTML 容器
-                            html_card = f"""
-                            <div style="border-left: 5px solid {border_color}; padding: 15px 20px; background: {bg_color}; border-radius: 4px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-                            <div style="font-size:1.05rem; line-height:1.8; color: {text_color}; white-space: pre-wrap;">
-                            {seg_text}
-                            </div>
-                            </div>
-                            """
+                            html_card = f"""<div style="border-left: 5px solid {border_color}; padding: 15px 20px; background: {bg_color}; border-radius: 4px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);"><div style="font-size:1.05rem; line-height:1.8; color: {text_color}; white-space: pre-wrap;">{seg_text}</div></div>"""
                             st.markdown(html_card, unsafe_allow_html=True)
 
                             # --- 按钮操作栏 ---
