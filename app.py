@@ -2051,6 +2051,40 @@ elif menu == "📂 智能拆书 & 资料":
 # =========================================================
 # 🎓 AI 课堂 (讲义) - V10.0 极简交互版 (一键补全+预览优先)
 # =========================================================
+# --- 🎓 讲义进度管理辅助函数 ---
+def get_lecture_progress(uid, lid):
+    """获取某篇讲义的所有段落状态"""
+    try:
+        # lid 需要转为 int
+        res = supabase.table("lecture_progress").select("*").eq("user_id", uid).eq("lecture_id", int(lid)).execute()
+        progress_map = {}
+        for item in res.data:
+            progress_map[item['segment_index']] = {
+                'read': item.get('is_read', False),
+                'star': item.get('is_star', False)
+            }
+        return progress_map
+    except Exception as e:
+        return {}
+
+
+def update_segment_status(uid, lid, idx, status_type, new_val):
+    """更新某一段的状态"""
+    try:
+        lid = int(lid)
+        existing = supabase.table("lecture_progress").select("id").eq("user_id", uid).eq("lecture_id", lid).eq(
+            "segment_index", idx).execute()
+
+        data = {status_type: new_val, "user_id": uid, "lecture_id": lid, "segment_index": idx}
+
+        if existing.data:
+            supabase.table("lecture_progress").update({status_type: new_val}).eq("id", existing.data[0]['id']).execute()
+        else:
+            supabase.table("lecture_progress").insert(data).execute()
+        return True
+    except Exception as e:
+        print(f"Update Error: {e}")
+        return False
 elif menu == "🎓 AI 课堂 (讲义)":
     st.title("🎓 AI 深度课堂")
     st.caption("分步生成长篇讲义，支持断点续写、深度问答与实时编辑。")
@@ -2128,7 +2162,102 @@ elif menu == "🎓 AI 课堂 (讲义)":
                             st.rerun()
 
                     st.markdown("---")
-                    st.markdown(les['content'])
+                    st.markdown("---")
+
+                    # === [新增] 智能阅读器核心逻辑 ===
+                    lid = les['id']
+                    full_content = les['content']
+
+                    # 1. 阅读模式筛选器
+                    st.markdown("##### 📖 沉浸阅读")
+                    # 使用 session_state 记住筛选状态，防止刷新重置
+                    mode_key = f"read_mode_{lid}"
+                    filter_mode = st.radio("筛选显示",
+                                           ["👁️ 阅读全部", "⚡ 只读未读", "✅ 回看已读", "⭐ 回看重点"],
+                                           horizontal=True,
+                                           key=mode_key,
+                                           label_visibility="collapsed")
+
+                    st.divider()
+
+                    # 2. 内容切片与状态加载
+                    # 按双换行符切割段落 (Markdown通常用双换行分段)
+                    segments = full_content.split('\n\n')
+                    prog_map = get_lecture_progress(user_id, lid)
+
+                    visible_count = 0
+
+                    # 3. 循环渲染每一段
+                    for idx, seg_text in enumerate(segments):
+                        if not seg_text.strip(): continue  # 跳过空行
+
+                        # 获取该段状态
+                        status = prog_map.get(idx, {'read': False, 'star': False})
+                        is_read = status['read']
+                        is_star = status['star']
+
+                        # --- 筛选逻辑 ---
+                        if filter_mode == "⚡ 只读未读" and is_read: continue
+                        if filter_mode == "✅ 回看已读" and not is_read: continue
+                        if filter_mode == "⭐ 回看重点" and not is_star: continue
+
+                        visible_count += 1
+
+                        # --- 样式定义 ---
+                        if is_star:
+                            border_color = "#ffc107"  # 金色 (重点)
+                            bg_color = "rgba(255, 193, 7, 0.08)"
+                        elif is_read:
+                            border_color = "#e0e0e0"  # 灰色 (已读)
+                            bg_color = "rgba(0,0,0,0.01)"
+                            text_color = "#888"
+                        else:
+                            border_color = "#00C090"  # 绿色 (未读)
+                            bg_color = "white"
+                            text_color = "#222"
+
+                        # --- 渲染卡片 ---
+                        with st.container():
+                            # 自定义 HTML 容器
+                            st.markdown(f"""
+                                                <div style="border-left: 5px solid {border_color}; padding: 12px 18px; background: {bg_color}; border-radius: 0 8px 8px 0; margin-bottom: 12px; box-shadow: 0 2px 5px rgba(0,0,0,0.02);">
+                                                    <div style="font-size:1.05rem; line-height:1.7; color: {text_color}">
+                                                        {seg_text}
+                                                    </div>
+                                                </div>
+                                                """, unsafe_allow_html=True)
+
+                            # --- 按钮操作栏 ---
+                            c_act1, c_act2, c_void = st.columns([1.5, 1.5, 6])
+                            btn_suffix = f"{lid}_{idx}"  # 唯一ID
+
+                            with c_act1:
+                                if is_read:
+                                    if st.button("↩️ 设为未读", key=f"ur_{btn_suffix}"):
+                                        update_segment_status(user_id, lid, idx, "is_read", False)
+                                        st.rerun()
+                                else:
+                                    if st.button("✅ 标记已读", key=f"rd_{btn_suffix}", type="primary"):
+                                        update_segment_status(user_id, lid, idx, "is_read", True)
+                                        st.rerun()
+
+                            with c_act2:
+                                if is_star:
+                                    if st.button("🚫 取消重点", key=f"us_{btn_suffix}"):
+                                        update_segment_status(user_id, lid, idx, "is_star", False)
+                                        st.rerun()
+                                else:
+                                    if st.button("⭐ 标记重点", key=f"st_{btn_suffix}"):
+                                        update_segment_status(user_id, lid, idx, "is_star", True)
+                                        st.rerun()
+
+                    if visible_count == 0:
+                        st.info(f"📭 当前模式【{filter_mode}】下没有内容。")
+                        if filter_mode == "⚡ 只读未读":
+                            st.success("🎉 太棒了！本节讲义已全部读完！")
+
+                    st.markdown("---")
+                    # ==========================================
 
                     # 简单问答
                     st.divider()
