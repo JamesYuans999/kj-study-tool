@@ -2223,7 +2223,7 @@ elif menu == "🎓 AI 课堂 (讲义)":
 
                     # === 2. 内容切片与状态加载 ===
                     # 使用智能分段算法，每段大约 300-500 字，或者是独立的标题章节
-                    segments = smart_lecture_segmentation(full_content, max_chars=350)
+                    segments = smart_lecture_segmentation(full_content, max_chars=1000)
 
                     # 获取当前数据库里的状态
                     prog_map = get_lecture_progress(user_id, lid)
@@ -2262,13 +2262,14 @@ elif menu == "🎓 AI 课堂 (讲义)":
                         # --- 渲染卡片 ---
                         with st.container():
                             # 自定义 HTML 容器
-                            st.markdown(f"""
-                                                <div style="border-left: 5px solid {border_color}; padding: 12px 18px; background: {bg_color}; border-radius: 0 8px 8px 0; margin-bottom: 12px; box-shadow: 0 2px 5px rgba(0,0,0,0.02);">
-                                                    <div style="font-size:1.05rem; line-height:1.7; color: {text_color}">
-                                                        {seg_text}
-                                                    </div>
-                                                </div>
-                                                """, unsafe_allow_html=True)
+                            html_card = f"""
+                            <div style="border-left: 5px solid {border_color}; padding: 15px 20px; background: {bg_color}; border-radius: 4px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                            <div style="font-size:1.05rem; line-height:1.8; color: {text_color}; white-space: pre-wrap;">
+                            {seg_text}
+                            </div>
+                            </div>
+                            """
+                            st.markdown(html_card, unsafe_allow_html=True)
 
                             # --- 按钮操作栏 ---
                             c_act1, c_act2, c_void = st.columns([1.5, 1.5, 6])
