@@ -2052,17 +2052,33 @@ elif menu == "📂 智能拆书 & 资料":
                             else:
                                 df = pd.read_excel(up_excel_q)
 
-                            # 2. 创建书籍
-                            b_res = supabase.table("books").insert({
-                                "user_id": user_id, "subject_id": sid, "title": book_name_q, "total_pages": 0
-                            }).execute()
-                            bid = b_res.data[0]['id']
+                            # === 🟢 智能书籍判断逻辑 (修改点) ===
+                            bid = None
+                            # 先查是否已存在同名书
+                            exist_book = supabase.table("books").select("id").eq("user_id", user_id).eq("title",
+                                                                                                        book_name_q).execute()
 
-                            # 3. 遍历并导入
+                            if exist_book.data:
+                                # A. 如果书已存在 -> 追加模式
+                                bid = exist_book.data[0]['id']
+                                st.toast(f"📚 检测到已有书籍《{book_name_q}》，将开启【追加模式】...")
+                            else:
+                                # B. 如果书不存在 -> 新建模式
+                                b_res = supabase.table("books").insert({
+                                    "user_id": user_id, "subject_id": sid, "title": book_name_q, "total_pages": 0
+                                }).execute()
+                                bid = b_res.data[0]['id']
+                                st.toast(f"🆕 创建新书《{book_name_q}》...")
+
+                            # 3. 遍历并导入 (后续逻辑保持不变，但加入了章节排重)
                             bar = st.progress(0)
-                            chapter_cache = {}  # 缓存章节ID，避免重复创建: {"第一章": 101}
-                            batch_data = []
 
+                            # 预加载该书已有的章节，防止章节重复创建
+                            existing_chaps = supabase.table("chapters").select("title, id").eq("book_id",
+                                                                                               bid).execute().data
+                            chapter_cache = {c['title']: c['id'] for c in existing_chaps}  # {"第一章": 101, "第二章": 102}
+
+                            batch_data = []
                             total_rows = len(df)
 
                             for i, row in df.iterrows():
@@ -2070,12 +2086,13 @@ elif menu == "📂 智能拆书 & 资料":
                                 c_title = str(row.get('章节名称') or row.get('chapter') or '默认章节').strip()
 
                                 if c_title not in chapter_cache:
-                                    # 创建新章节
+                                    # 只有当章节不存在时，才创建新章节
                                     c_res = supabase.table("chapters").insert({
                                         "book_id": bid, "title": c_title, "start_page": 0, "end_page": 0,
                                         "user_id": user_id
                                     }).execute()
-                                    chapter_cache[c_title] = c_res.data[0]['id']
+                                    new_cid = c_res.data[0]['id']
+                                    chapter_cache[c_title] = new_cid
 
                                 cid = chapter_cache[c_title]
 
@@ -2104,7 +2121,7 @@ elif menu == "📂 智能拆书 & 资料":
                                     "batch_source": f"Upload-{datetime.date.today()}"
                                 })
 
-                                # 分批写入 (每10条写一次，防止包太大)
+                                # 分批写入
                                 if len(batch_data) >= 10:
                                     supabase.table("question_bank").insert(batch_data).execute()
                                     batch_data = []
@@ -2117,13 +2134,13 @@ elif menu == "📂 智能拆书 & 资料":
 
                             bar.progress(100)
                             st.balloons()
-                            st.success(f"🎉 导入成功！共处理 {total_rows} 条题目，已存入新书：《{book_name_q}》")
+                            st.success(f"🎉 处理完成！已将 {total_rows} 道题存入书籍：《{book_name_q}》")
 
                             st.markdown("---")
                             if st.button("🔄 继续导入", key="btn_continue_q"): st.rerun()
 
                         except Exception as e:
-                            st.error(f"导入遇到错误: {e}\n请检查 Excel 列名是否与模板一致。")
+                            st.error(f"导入遇到错误: {e}")
 
     # =====================================================
     # 场景 B: 已有书籍管理
