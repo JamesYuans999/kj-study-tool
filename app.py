@@ -1945,60 +1945,185 @@ elif menu == "📂 智能拆书 & 资料":
         # 模式 2: Excel 结构化导入
         # -------------------------------------------------
         else:
-            st.markdown("#### 📥 Excel 教材导入")
-            st.info("💡 适合导入已整理好的笔记、考点汇总、法条大全。**无需消耗 AI Token，内容 100% 准确。**")
+            st.markdown("#### 📥 Excel/CSV 结构化导入")
 
-            data_template = [
-                {"章节名称": "第一章 总论", "正文内容": "这里填入第一章的所有知识点文本..."},
-                {"章节名称": "第二章 存货", "正文内容": "存货的初始计量包括：\n1. 购买价款..."}
-            ]
-            df_temp = pd.DataFrame(data_template)
-            csv = df_temp.to_csv(index=False).encode('utf-8-sig')
-            st.download_button("⬇️ 下载导入模版 (.csv)", csv, "教材导入模版.csv", "text/csv")
+            # === 1. 选择数据类型 ===
+            data_type = st.radio("请选择文件内容类型：",
+                                 ["📖 纯教材 (导入知识点/法条)", "📑 习题库 (导入题目/答案)"],
+                                 horizontal=True)
 
             st.divider()
 
-            up_excel = st.file_uploader("上传填好的文件", type=["csv", "xlsx"])
-            book_name_input = st.text_input("给这份资料起个名字", placeholder="例如：2025中级实务-考点狂背版")
+            # >>>>>>>>> 分支 A: 纯教材导入 (保持原有逻辑) <<<<<<<<<
+            if "纯教材" in data_type:
+                st.info("💡 适合导入已整理好的笔记、考点汇总、法条大全。无需消耗 AI Token。")
 
-            if up_excel and book_name_input:
-                if st.button("🚀 立即导入数据库", type="primary"):
-                    try:
-                        if up_excel.name.endswith('.csv'):
-                            df = pd.read_csv(up_excel)
-                        else:
-                            df = pd.read_excel(up_excel)
+                data_template = [
+                    {"章节名称": "第一章 总论", "正文内容": "这里填入第一章的所有知识点文本..."},
+                    {"章节名称": "第二章 存货", "正文内容": "存货的初始计量包括：\n1. 购买价款..."}
+                ]
+                df_temp = pd.DataFrame(data_template)
+                csv = df_temp.to_csv(index=False).encode('utf-8-sig')
+                st.download_button("⬇️ 下载教材模板 (.csv)", csv, "教材导入模版.csv", "text/csv")
 
-                        bar = st.progress(0)
+                st.divider()
 
-                        b_res = supabase.table("books").insert({
-                            "user_id": user_id, "subject_id": sid, "title": book_name_input, "total_pages": 0
-                        }).execute()
-                        bid = b_res.data[0]['id']
+                up_excel = st.file_uploader("上传填好的文件", type=["csv", "xlsx"], key="up_mat_excel")
+                book_name_input = st.text_input("给这份资料起个名字", placeholder="例如：2025中级实务-考点狂背版",
+                                                key="bn_mat")
 
-                        total_rows = len(df)
-                        for i, row in df.iterrows():
-                            chap_title = str(row.get('章节名称') or row.get('title') or f'第 {i + 1} 节').strip()
-                            content = str(row.get('正文内容') or row.get('content') or '').strip()
-                            if not content: continue
+                if up_excel and book_name_input:
+                    if st.button("🚀 立即导入教材", type="primary"):
+                        try:
+                            if up_excel.name.endswith('.csv'):
+                                df = pd.read_csv(up_excel)
+                            else:
+                                df = pd.read_excel(up_excel)
 
-                            c_res = supabase.table("chapters").insert({
-                                "book_id": bid, "title": chap_title, "start_page": 0, "end_page": 0, "user_id": user_id
+                            bar = st.progress(0)
+
+                            b_res = supabase.table("books").insert({
+                                "user_id": user_id, "subject_id": sid, "title": book_name_input, "total_pages": 0
                             }).execute()
-                            cid = c_res.data[0]['id']
-                            save_material_v3(cid, content, user_id)
-                            bar.progress((i + 1) / total_rows)
+                            bid = b_res.data[0]['id']
 
-                        bar.progress(100)
-                        st.balloons()
-                        st.success(f"🎉 导入成功！已创建书籍：《{book_name_input}》")
+                            total_rows = len(df)
+                            for i, row in df.iterrows():
+                                chap_title = str(row.get('章节名称') or row.get('title') or f'第 {i + 1} 节').strip()
+                                content = str(row.get('正文内容') or row.get('content') or '').strip()
+                                if not content: continue
 
-                        st.markdown("---")
-                        if st.button("🔄 继续导入下一个 Excel", type="primary", key="btn_continue_excel"):
-                            st.rerun()
+                                c_res = supabase.table("chapters").insert({
+                                    "book_id": bid, "title": chap_title, "start_page": 0, "end_page": 0,
+                                    "user_id": user_id
+                                }).execute()
+                                cid = c_res.data[0]['id']
+                                save_material_v3(cid, content, user_id)
+                                bar.progress((i + 1) / total_rows)
 
-                    except Exception as e:
-                        st.error(f"导入失败: {e}。\n请确保 Excel 包含【章节名称】和【正文内容】两列。")
+                            bar.progress(100)
+                            st.balloons()
+                            st.success(f"🎉 导入成功！已创建书籍：《{book_name_input}》")
+                            st.markdown("---")
+                            if st.button("🔄 继续导入", key="btn_continue_mat"): st.rerun()
+
+                        except Exception as e:
+                            st.error(f"导入失败: {e}。\n请确保 Excel 包含【章节名称】和【正文内容】两列。")
+
+            # >>>>>>>>> 分支 B: 习题库导入 (新增逻辑) <<<<<<<<<
+            else:
+                st.info("💡 适合导入整本习题册。系统会根据【章节名称】自动归类题目。")
+
+                # 模板下载
+                q_template = [
+                    {
+                        "章节名称": "第一章 总论",
+                        "题型(single/multi/judgment/subjective)": "single",
+                        "题目内容": "下列关于会计假设的说法...",
+                        "选项(用|分隔)": "A.选项一 | B.选项二 | C.选项三 | D.选项四",
+                        "正确答案": "A",
+                        "解析": "这里是解析..."
+                    },
+                    {
+                        "章节名称": "第二章 存货",
+                        "题型": "multi",
+                        "题目内容": "下列属于存货的有...",
+                        "选项(用|分隔)": "A.原材料 | B.库存商品 | C.工程物资",
+                        "正确答案": "AB",
+                        "解析": ""
+                    }
+                ]
+                df_q_temp = pd.DataFrame(q_template)
+                csv_q = df_q_temp.to_csv(index=False).encode('utf-8-sig')
+                st.download_button("⬇️ 下载习题模板 (.csv)", csv_q, "习题库导入模版.csv", "text/csv")
+
+                st.divider()
+
+                up_excel_q = st.file_uploader("上传填好的文件", type=["csv", "xlsx"], key="up_q_excel")
+                book_name_q = st.text_input("📚 给习题集起个名字", placeholder="例如：2025中级经济法-必刷500题",
+                                            key="bn_q")
+
+                if up_excel_q and book_name_q:
+                    if st.button("🚀 立即导入题库", type="primary"):
+                        try:
+                            # 1. 读取文件
+                            if up_excel_q.name.endswith('.csv'):
+                                df = pd.read_csv(up_excel_q)
+                            else:
+                                df = pd.read_excel(up_excel_q)
+
+                            # 2. 创建书籍
+                            b_res = supabase.table("books").insert({
+                                "user_id": user_id, "subject_id": sid, "title": book_name_q, "total_pages": 0
+                            }).execute()
+                            bid = b_res.data[0]['id']
+
+                            # 3. 遍历并导入
+                            bar = st.progress(0)
+                            chapter_cache = {}  # 缓存章节ID，避免重复创建: {"第一章": 101}
+                            batch_data = []
+
+                            total_rows = len(df)
+
+                            for i, row in df.iterrows():
+                                # A. 获取/创建章节
+                                c_title = str(row.get('章节名称') or row.get('chapter') or '默认章节').strip()
+
+                                if c_title not in chapter_cache:
+                                    # 创建新章节
+                                    c_res = supabase.table("chapters").insert({
+                                        "book_id": bid, "title": c_title, "start_page": 0, "end_page": 0,
+                                        "user_id": user_id
+                                    }).execute()
+                                    chapter_cache[c_title] = c_res.data[0]['id']
+
+                                cid = chapter_cache[c_title]
+
+                                # B. 解析题目数据
+                                content = row.get('题目内容') or row.get('content') or row.get('question')
+                                ans = row.get('正确答案') or row.get('answer') or row.get('correct_answer')
+                                type_str = str(row.get('题型(single/multi/judgment/subjective)') or row.get(
+                                    'type') or 'single').strip()
+
+                                if pd.isna(content) or pd.isna(ans): continue  # 跳过空行
+
+                                opts_raw = row.get('选项(用|分隔)') or row.get('options')
+                                opts_list = []
+                                if opts_raw and not pd.isna(opts_raw):
+                                    opts_list = [str(x).strip() for x in str(opts_raw).split("|") if str(x).strip()]
+
+                                # C. 加入待插入列表
+                                batch_data.append({
+                                    "chapter_id": cid, "user_id": user_id,
+                                    "type": type_str,
+                                    "content": str(content),
+                                    "correct_answer": str(ans),
+                                    "explanation": str(row.get('解析') or row.get('explanation') or ''),
+                                    "options": opts_list,
+                                    "origin": "excel_import",
+                                    "batch_source": f"Upload-{datetime.date.today()}"
+                                })
+
+                                # 分批写入 (每10条写一次，防止包太大)
+                                if len(batch_data) >= 10:
+                                    supabase.table("question_bank").insert(batch_data).execute()
+                                    batch_data = []
+
+                                bar.progress((i + 1) / total_rows)
+
+                            # 写入剩余的
+                            if batch_data:
+                                supabase.table("question_bank").insert(batch_data).execute()
+
+                            bar.progress(100)
+                            st.balloons()
+                            st.success(f"🎉 导入成功！共处理 {total_rows} 条题目，已存入新书：《{book_name_q}》")
+
+                            st.markdown("---")
+                            if st.button("🔄 继续导入", key="btn_continue_q"): st.rerun()
+
+                        except Exception as e:
+                            st.error(f"导入遇到错误: {e}\n请检查 Excel 列名是否与模板一致。")
 
     # =====================================================
     # 场景 B: 已有书籍管理
